@@ -183,9 +183,19 @@ serves **today**:
   items.md — the server is authoritative and the script hook is never previewed). Rendered by
   the Inventory page's gear section + Units & equipment panel.
 
-**Not present on the wire** (so not modeled here): formation *editing*, consumable use,
-travel/area, harvesting/crafting actions, markets. When those land, add their message variants
-to `protocol.ts` and grow the context; until then those pages stay on local placeholder data.
+- **Consumables & formation effects** (INVENTORY_IMPL.md Phase 3): the `useConsumable` op
+  applies a consumable's Zone Effect to the player's own formation (the only `target` the server
+  implements; `zone`/`world` nack); the server acks with fresh `inventory` + `effects` snapshots.
+  The `effects` push is the authoritative set of active **formation-scoped** Zone Effects
+  (`EffectView`: `summary` + `remainingSecs` baseline), replaced wholesale; pushed at connect,
+  resync, after a use, and on expiry. `world.effects` holds it; the Inventory page renders Use
+  buttons on consumables and an **Active effects** panel that counts the timer down locally from
+  the server baseline.
+
+**Not present on the wire** (so not modeled here): formation *editing*, zone/world consumable
+scopes, travel/area, harvesting/crafting actions, markets. When those land, add their message
+variants to `protocol.ts` and grow the context; until then those pages stay on local placeholder
+data.
 
 **Auth gate.** [App.tsx](src/App.tsx) shows [LoginRegister](src/pages/LoginRegister.tsx) until
 the client is authenticated; only then does it mount `GameProvider` + the router. "Authed" is

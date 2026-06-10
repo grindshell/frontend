@@ -28,6 +28,7 @@ import type {
   ClientData,
   CombatView,
   CurrenciesView,
+  EffectView,
   EnemyInfo,
   GearView,
   GeneralResourcesView,
@@ -123,6 +124,9 @@ type WorldState = {
   inventory: InventoryState | null;
   /** Owned units (the `roster` push); null until the first server push. */
   roster: UnitView[] | null;
+  /** Active formation-scoped Zone Effects (the `effects` push); authoritative,
+   * replaced wholesale. Empty until the first push. */
+  effects: EffectView[];
   lastRewards: RewardReport | null;
   /** The last combat request, for quick restart. */
   lastCombat: { enemy: string; kc: number } | null;
@@ -153,6 +157,10 @@ export type Game = {
   equipGear: (unit: string, instanceId: number, onError?: (reason?: string) => void) => void;
   /** Unequip a gear instance (by id) back into the inventory. */
   unequipGear: (unit: string, instanceId: number, onError?: (reason?: string) => void) => void;
+  /** Use a consumable on the player's own formation (items.md "Consumables");
+   * the server acks with fresh inventory + effects snapshots or nacks
+   * (`onError`). */
+  useConsumable: (item: string, onError?: (reason?: string) => void) => void;
   /** Dismiss the reward view. */
   clearRewards: () => void;
   /** Append a local (client-only) line to the action log. */
@@ -174,6 +182,7 @@ export function GameProvider(props: ParentProps) {
     enemies: {},
     inventory: null,
     roster: null,
+    effects: [],
     lastRewards: null,
     lastCombat: null,
     log: [],
@@ -272,6 +281,10 @@ export function GameProvider(props: ParentProps) {
       case "roster":
         // Authoritative snapshot: replace.
         setWorld("roster", msg.units);
+        break;
+      case "effects":
+        // Authoritative snapshot: replace the active-effect set.
+        setWorld("effects", msg.effects);
         break;
       case "actionTick": {
         const act = world.action;
@@ -493,6 +506,16 @@ export function GameProvider(props: ParentProps) {
     send({ t: "game", gt: "unequipGear", unit, instanceId }, { onNack: onError });
   };
 
+  const useConsumable = (item: string, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — consumables need a server connection");
+      return;
+    }
+    // Formation scope is the only one the server implements today; the ack
+    // rides with fresh inventory + effects snapshots (nothing optimistic).
+    send({ t: "game", gt: "useConsumable", item, target: "formation" }, { onNack: onError });
+  };
+
   const clearRewards = () => setWorld("lastRewards", null);
 
   const logLocal = (text: string) => pushLog(text, "local");
@@ -575,6 +598,7 @@ export function GameProvider(props: ParentProps) {
     stopAction,
     equipGear,
     unequipGear,
+    useConsumable,
     clearRewards,
     logLocal,
   };

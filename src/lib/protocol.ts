@@ -66,7 +66,12 @@ export type GameData =
   | { gt: "equipGear"; unit: string; instanceId: number }
   // Unequip by instance id (unique across slots and trinkets). Never refused
   // for a worn piece — requirements gate equipping only.
-  | { gt: "unequipGear"; unit: string; instanceId: number };
+  | { gt: "unequipGear"; unit: string; instanceId: number }
+  // Use a consumable (items.md "Consumables"): consumes one and applies its
+  // Zone Effect at `target` scope. The server implements `formation`; `zone`
+  // and `world` nack as not-yet-available. Nacks when the item is absent or
+  // not a consumable.
+  | { gt: "useConsumable"; item: string; target: "formation" | "zone" | "world" };
 
 // Top-level inbound data, tagged on `t`. Chat ops are carried under `t: "chat"`
 // and game ops under `t: "game"`. `requestState` is a top-level *control*
@@ -192,6 +197,21 @@ export type UnitView = {
   equipment: GearView[];
 };
 
+/** One active formation-scoped Zone Effect (`EffectView`, zone-effects.md
+ * "Scope": formation). `remainingSecs` is the server-authoritative countdown
+ * baseline at snapshot time; the client counts down locally from there. */
+export type EffectView = {
+  id: string;
+  name: string;
+  /** Modifier kind tag — "dropRate" today. */
+  kind: string;
+  /** One-line human summary (e.g. "Drop rate up 25×3"). */
+  summary: string;
+  /** Scope — only "formation" is implemented. */
+  scope: string;
+  remainingSecs: number;
+};
+
 /** One attack within an idle-combat round (`AttackReport`), reported in actual
  * Speed order — the first entry struck first. */
 export type AttackReport = {
@@ -296,7 +316,11 @@ export type ServerMessage =
   // The authoritative roster snapshot (units.md): every owned unit with
   // trained/effective stats and equipped gear. Pushed at connect, on
   // `requestState`, and after every equip/unequip. The client REPLACES.
-  | { t: "roster"; units: UnitView[] };
+  | { t: "roster"; units: UnitView[] }
+  // The authoritative active-effects snapshot (zone-effects.md): the player's
+  // active formation-scoped Zone Effects. Pushed at connect, on `requestState`,
+  // after a consumable is used, and when an effect expires. Client REPLACES.
+  | { t: "effects"; effects: EffectView[] };
 
 /**
  * Parse a raw WebSocket text frame into typed `ServerMessage`s.

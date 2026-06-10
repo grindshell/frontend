@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { useGame } from "../../lib/game-context";
 import type { GearView, ItemStackView, UnitStatsView, UnitView } from "../../lib/protocol";
 
@@ -6,8 +6,9 @@ import type { GearView, ItemStackView, UnitStatsView, UnitView } from "../../lib
 // from the server's authoritative `inventory` push, plus the gear/equipment
 // surface over the roster push. Rewards land here only at action end
 // (actions.md "Reward delivery") — accruing tallies live on the Actions
-// screen, not here. The consumable-use surface arrives with its phase
-// (INVENTORY_IMPL.md).
+// screen, not here. Consumables are usable on the player's own formation, and
+// the resulting formation-scoped Zone Effects surface in the Active effects
+// panel with a live countdown (zone-effects.md).
 
 /** Display metadata for the fixed resource classes (resources.md). */
 const CURRENCY_ROWS = [
@@ -28,6 +29,11 @@ const fmt = (v: number | undefined) => (v ?? 0).toLocaleString("en-US");
 export function Inventory() {
   const game = useGame();
   const inv = () => game.world.inventory;
+  const [useError, setUseError] = createSignal<string | null>(null);
+  const onUse = (id: string) => {
+    setUseError(null);
+    game.useConsumable(id, (reason) => setUseError(reason ?? "could not use that item"));
+  };
 
   // Item stacks split by kind; item resources sorted by category then name so
   // the grouping label reads top-to-bottom.
@@ -81,6 +87,9 @@ export function Inventory() {
           </div>
         </div>
 
+        {/* Active formation-scoped Zone Effects (zone-effects.md). */}
+        <ActiveEffects />
+
         {/* Bulk general resources. */}
         <div>
           <p class="text-xs text-base-content/45 mb-1 px-1">General resources</p>
@@ -107,12 +116,18 @@ export function Inventory() {
             showCategory
             empty="No item resources yet."
           />
-          <StackTable
-            title="Consumables"
-            hint="usable once the consumable-use surface lands"
-            stacks={consumables()}
-            empty="No consumables yet."
-          />
+          <div>
+            <StackTable
+              title="Consumables"
+              hint="use on your formation"
+              stacks={consumables()}
+              empty="No consumables yet."
+              onUse={onUse}
+            />
+            <Show when={useError()}>
+              <p class="text-xs text-error mt-2 px-1">✗ {useError()}</p>
+            </Show>
+          </div>
         </div>
         <Show when={other().length > 0}>
           <StackTable title="Other items" stacks={other()} empty="" />
@@ -322,6 +337,8 @@ function StackTable(props: {
   stacks: ItemStackView[];
   showCategory?: boolean;
   empty: string;
+  /** When set, each row gets a Use button (consumables). */
+  onUse?: (id: string) => void;
 }) {
   return (
     <div class="bg-base-200/40 rounded-box p-3">
@@ -343,6 +360,9 @@ function StackTable(props: {
                 <th class="font-normal w-16">cat</th>
               </Show>
               <th class="font-normal text-right w-16">qty</th>
+              <Show when={props.onUse}>
+                <th class="font-normal w-14" />
+              </Show>
             </tr>
           </thead>
           <tbody>
@@ -354,6 +374,17 @@ function StackTable(props: {
                     <td class="font-mono uppercase text-base-content/55">{s.category ?? "—"}</td>
                   </Show>
                   <td class="font-mono text-right">{s.qty}</td>
+                  <Show when={props.onUse}>
+                    <td class="text-right">
+                      <button
+                        class="btn btn-xs btn-soft"
+                        title={`Use ${s.name} on your formation`}
+                        onClick={() => props.onUse!(s.id)}
+                      >
+                        Use
+                      </button>
+                    </td>
+                  </Show>
                 </tr>
               )}
             </For>
@@ -361,5 +392,56 @@ function StackTable(props: {
         </table>
       </Show>
     </div>
+  );
+}
+
+/** The player's active formation-scoped Zone Effects (zone-effects.md), live
+ * over the authoritative `effects` push, with a local 1-second countdown
+ * seeded from the server's remaining-time baseline. */
+function ActiveEffects() {
+  const game = useGame();
+  const [nowMs, setNowMs] = createSignal(Date.now());
+  onMount(() => {
+    const h = setInterval(() => setNowMs(Date.now()), 1000);
+    onCleanup(() => clearInterval(h));
+  });
+
+  // Stamp an absolute expiry the moment a snapshot arrives (this memo re-runs
+  // only when the effect set changes — never on each countdown tick).
+  const stamped = createMemo(() => {
+    const at = Date.now();
+    return game.world.effects.map((e) => ({ ...e, expiresAtMs: at + e.remainingSecs * 1000 }));
+  });
+
+  const fmtLeft = (ms: number) => {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+  };
+
+  return (
+    <Show when={stamped().length > 0}>
+      <div>
+        <p class="text-xs text-base-content/45 mb-1 px-1">Active effects</p>
+        <div class="flex flex-col gap-2">
+          <For each={stamped()}>
+            {(e) => {
+              const left = () => e.expiresAtMs - nowMs();
+              return (
+                <div class="bg-base-200/40 rounded-box px-3 py-2 flex items-center gap-3">
+                  <span class="badge badge-sm badge-success badge-soft shrink-0">{e.scope}</span>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm truncate">{e.name}</div>
+                    <div class="text-[10px] text-base-content/45 font-mono">{e.summary}</div>
+                  </div>
+                  <span class="font-mono text-sm tabular-nums" classList={{ "text-warning": left() < 30000 }}>
+                    {fmtLeft(left())}
+                  </span>
+                </div>
+              );
+            }}
+          </For>
+        </div>
+      </div>
+    </Show>
   );
 }
