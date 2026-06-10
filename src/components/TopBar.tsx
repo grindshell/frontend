@@ -1,5 +1,5 @@
 import { Show } from "solid-js";
-import { useGame } from "../lib/game-context";
+import { actionTarget, useGame } from "../lib/game-context";
 import { Icon } from "./Icon";
 
 // The current-action indicator: the in-flight idle action's kind and KC
@@ -26,7 +26,7 @@ export function TopBar(props: { showChat: boolean; onToggleChat: () => void }) {
           <Show when={action()} fallback={"no action"}>
             {(a) => (
               <>
-                {a().enemyName} · KC {a().kcDone}/{a().kcTarget}
+                {actionTarget(a())} · KC {a().kcDone}/{a().kcTarget}
               </>
             )}
           </Show>

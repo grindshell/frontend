@@ -26,6 +26,7 @@ import { Connection, type ConnStatus } from "./connection";
 import type {
   ActionView,
   ClientData,
+  CombatView,
   EnemyInfo,
   RewardsView,
   ServerMessage,
@@ -71,12 +72,17 @@ export type ActionLogEntry = {
  * until dismissed or a new action starts. */
 export type RewardReport = {
   kind: string;
-  enemyName: string;
+  /** What the action acted on, by display name (the enemy for combat). */
+  targetName: string;
   kcTarget: number;
   kcDone: number;
   stopped: boolean;
   rewards: RewardsView;
 };
+
+/** What an action is acting on, by display name (its kind's slice owns it). */
+export const actionTarget = (action: ActionView): string =>
+  action.combat?.enemyName ?? action.kind;
 
 /** The game-engine slice of client state: zone, the in-flight idle action
  * (baseline from `gameState`, folded with `actionTick` deltas), the per-zone
@@ -207,7 +213,7 @@ export function GameProvider(props: ParentProps) {
           // when the action already has progress.
           pushLog(
             `${msg.action.kcDone > 0 ? "Resumed" : "Started"}: ${msg.action.kind} vs ` +
-              `${msg.action.enemyName} (KC ${msg.action.kcDone}/${msg.action.kcTarget}).`,
+              `${actionTarget(msg.action)} (KC ${msg.action.kcDone}/${msg.action.kcTarget}).`,
             "info",
           );
         }
@@ -224,16 +230,21 @@ export function GameProvider(props: ParentProps) {
           if (msg.kcDone != null) patch.kcDone = msg.kcDone;
           if (msg.formationHp != null) patch.formationHp = msg.formationHp;
           if (msg.formationMaxHp != null) patch.formationMaxHp = msg.formationMaxHp;
-          if (msg.enemyHp != null) patch.enemyHp = msg.enemyHp;
-          if (msg.enemyMaxHp != null) patch.enemyMaxHp = msg.enemyMaxHp;
           if (msg.formationStats) patch.formationStats = msg.formationStats;
-          if (msg.enemyStats) patch.enemyStats = msg.enemyStats;
           if (msg.modifier) patch.modifier = msg.modifier;
           if (msg.tally) patch.tally = msg.tally;
           setWorld("action", patch);
+          // Combat's delta fields fold into the nested combat slice.
+          if (act.combat) {
+            const combat: Partial<CombatView> = {};
+            if (msg.enemyHp != null) combat.enemyHp = msg.enemyHp;
+            if (msg.enemyMaxHp != null) combat.enemyMaxHp = msg.enemyMaxHp;
+            if (msg.enemyStats) combat.enemyStats = msg.enemyStats;
+            if (Object.keys(combat).length > 0) setWorld("action", "combat", combat);
+          }
         }
         // Narrate the tick into the action log.
-        const name = act?.enemyName ?? "the enemy";
+        const name = act?.combat?.enemyName ?? "the enemy";
         switch (msg.phase) {
           case "preparation":
             pushLog(`Preparation complete — engaging ${name}.`, "info");
@@ -268,7 +279,7 @@ export function GameProvider(props: ParentProps) {
         setWorld("action", null);
         setWorld("lastRewards", {
           kind: msg.kind,
-          enemyName: msg.enemyName,
+          targetName: msg.targetName,
           kcTarget: msg.kcTarget,
           kcDone: msg.kcDone,
           stopped: msg.stopped,
@@ -279,7 +290,7 @@ export function GameProvider(props: ParentProps) {
           .map(([id, q]) => `${q} ${id}`)
           .join(", ");
         pushLog(
-          `${msg.stopped ? "Stopped" : "Finished"} ${msg.kind} vs ${msg.enemyName}: ` +
+          `${msg.stopped ? "Stopped" : "Finished"} ${msg.kind} vs ${msg.targetName}: ` +
             `${r.kills} kills, ${r.credits} credits${resources ? `, ${resources}` : ""}.`,
           "reward",
         );

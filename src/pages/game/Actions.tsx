@@ -217,6 +217,9 @@ function EnemyBrowser() {
  * stat blocks (with the live modifier), and the accrued tally. */
 function CurrentCombat(props: { act: ActionView }) {
   const game = useGame();
+  // The combat slice of the action view; always present when kind is
+  // "combat", which is the only way this component renders.
+  const combat = () => props.act.combat;
   const phaseLabel = () =>
     ({
       preparation: "preparing",
@@ -229,7 +232,7 @@ function CurrentCombat(props: { act: ActionView }) {
   return (
     <div class="flex flex-col gap-4">
       <div class="flex items-center gap-3 flex-wrap">
-        <h2 class="text-lg font-mono">Combat — {props.act.enemyName}</h2>
+        <h2 class="text-lg font-mono">Combat — {combat()?.enemyName}</h2>
         <span
           class="badge badge-sm"
           classList={{
@@ -261,12 +264,16 @@ function CurrentCombat(props: { act: ActionView }) {
 
       <div class="grid md:grid-cols-2 gap-4">
         <HpBar label="Your formation" hp={props.act.formationHp} max={props.act.formationMaxHp} cls="progress-success" />
-        <HpBar label={props.act.enemyName} hp={props.act.enemyHp} max={props.act.enemyMaxHp} cls="progress-error" />
+        <Show when={combat()}>
+          {(c) => <HpBar label={c().enemyName} hp={c().enemyHp} max={c().enemyMaxHp} cls="progress-error" />}
+        </Show>
       </div>
 
       <div class="grid md:grid-cols-2 gap-4">
         <StatsPanel title="Formation action stats" stats={props.act.formationStats} modifier={props.act.modifier} />
-        <StatsPanel title="Enemy action stats" stats={props.act.enemyStats} />
+        <Show when={combat()}>
+          {(c) => <StatsPanel title="Enemy action stats" stats={c().enemyStats} />}
+        </Show>
       </div>
 
       <div>
@@ -367,7 +374,7 @@ function RewardView() {
         {r().stopped ? "Action stopped" : "Action complete"}
       </h2>
       <p class="text-base-content/60">
-        {r().kind} vs {r().enemyName} — KC {r().kcDone}/{r().kcTarget}
+        {r().kind} vs {r().targetName} — KC {r().kcDone}/{r().kcTarget}
       </p>
       <div class="bg-base-200/40 rounded-box p-4">
         <p class="text-xs text-base-content/45 mb-2">Rewards committed</p>

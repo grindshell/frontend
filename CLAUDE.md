@@ -159,9 +159,12 @@ serves **today**:
   (`gameState`: zone + in-flight `ActionView`), zone enemy listings (`listEnemies` →
   `enemyList`, cached per zone in the context), `changeAction` (atomic stop-then-start per
   actions.md) / `stopAction`, per-tick `actionTick` **deltas** (absent fields unchanged;
-  folded over the `gameState` baseline), and the final `actionRewards`. The context keeps
-  this in `world` (zone, action, enemy cache, reward report, action log); the Actions page
-  and TopBar render it.
+  folded over the `gameState` baseline), and the final `actionRewards`. The `ActionView`'s
+  lifecycle fields (KC, phase, formation pool, stats/modifier/tally) are kind-agnostic;
+  the kind-specific slice nests under its key (`combat` — enemy id/name/pool/stats), and
+  `actionTick` is a flat delta union whose `attacks`/`enemy*` fields fold into that slice.
+  The context keeps this in `world` (zone, action, enemy cache, reward report, action log);
+  the Actions page and TopBar render it.
 
 **Not present on the wire** (so not modeled here): inventory, formation, travel/area,
 harvesting/crafting actions, markets. When those land, add their message variants to

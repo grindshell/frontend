@@ -115,23 +115,31 @@ export type AttackReport = {
   defeated: boolean;
 };
 
-/** The full snapshot of an in-flight idle action (`ActionView`), pushed in the
- * `gameState` slice; `actionTick` deltas fold over it. */
-export type ActionView = {
-  kind: string;
+/** The combat-specific slice of an `ActionView` (`CombatView`); other kinds
+ * carry their own slices as they land. */
+export type CombatView = {
   enemyId: string;
   enemyName: string;
+  enemyHp: number;
+  enemyMaxHp: number;
+  enemyStats: ActionStatsView;
+};
+
+/** The full snapshot of an in-flight idle action (`ActionView`), pushed in the
+ * `gameState` slice; `actionTick` deltas fold over it. The lifecycle fields are
+ * kind-agnostic; the kind-specific slice nests under its key (`combat` iff
+ * `kind === "combat"`). */
+export type ActionView = {
+  kind: string;
   kcTarget: number;
   kcDone: number;
   phase: ActionPhase;
   formationHp: number;
   formationMaxHp: number;
-  enemyHp: number;
-  enemyMaxHp: number;
   formationStats: ActionStatsView;
-  enemyStats: ActionStatsView;
   modifier: ActionStatsView;
   tally: RewardsView;
+  combat?: CombatView;
 };
 
 // Tagged on `t` (camelCase). Mirrors `Outbound`. `from` is the sender's
@@ -158,7 +166,9 @@ export type ServerMessage =
   | { t: "enemyList"; zone: string; enemies: EnemyInfo[] }
   // The per-tick delta for the in-flight action, batched at the end of the
   // global tick. `phase` is the lifecycle phase this tick executed; absent
-  // fields are unchanged and fold over the `gameState` baseline.
+  // fields are unchanged and fold over the `gameState` baseline. The delta is
+  // a flat union across kinds: `attacks`/`enemy*` are combat's (folding into
+  // `ActionView.combat`) and only appear for combat actions.
   | {
       t: "actionTick";
       phase: ActionPhase;
@@ -178,7 +188,8 @@ export type ServerMessage =
   | {
       t: "actionRewards";
       kind: string;
-      enemyName: string;
+      /** What the action acted on, by display name (the enemy for combat). */
+      targetName: string;
       kcTarget: number;
       kcDone: number;
       stopped: boolean;
