@@ -29,8 +29,13 @@ Mirrors the `editor/` stack on purpose (same Tauri + Solid + Tailwind + DaisyUI 
 
 - Tauri `^2` (+ `tauri-plugin-opener` `^2`). Rust edition 2021. The shell is currently the
   default scaffold ([src-tauri/src/lib.rs](src-tauri/src/lib.rs)) — no game-specific
-  commands yet. Server communication (the old client used a websocket + REST `game-context`)
-  is **not yet ported**; see §6.
+  commands yet.
+
+**Server (the `../backend` Rust workspace)**
+
+- The client talks to the backend directly over HTTP + WebSocket (not through Tauri). What's
+  actually wired today is **auth + chat only**; see §6 for the data layer and exactly which
+  contracts are real.
 
 **Tooling**
 
@@ -66,13 +71,25 @@ src/
     Icon.tsx          hero-icon stroked glyph set (name → SVG path)
     Sidebar.tsx       collapsible nav rail; router-driven active state + navigation
     TopBar.tsx        travel progress bar + chat show/hide toggle
-    ChatPanel.tsx     channel rail + send row + transcript (preliminary, static data)
+    ChatPanel.tsx     channel rail + send row + transcript; consumes the game context
+    TextInput.tsx     labelled input with validation-error / optional hint
+    CFTurnstile.tsx   Cloudflare Turnstile widget (lazy script load, optional)
+    GdprConsent.tsx   one-time "stores data locally" notice
   overview/
     Overview.tsx      the "/" dashboard: 12-col grid of moveable/resizeable cards
     cards.tsx         card shell registry + per-card bodies (tiered by area)
-  pages/game/         one component per route (Actions, Area, Formation, …) — see §4
+  pages/
+    LoginRegister.tsx the auth gate (login / register / forgot) — see §6
+    game/             one component per route (Actions, Area, Formation, …) — see §4
   lib/
     theme.ts          DaisyUI theme list + load/apply/persist (localStorage)
+    auth.ts           global auth signals (token / offline) + sign-in/out helpers
+    config.ts         runtime config from Vite env (endpoints, offline uiDev flag)
+    protocol.ts       wire types mirroring the backend's serde message shapes
+    api.ts            REST client (/api/login, /api/register)
+    connection.ts     WebSocket manager (auth handshake, nonce check, reconnect)
+    game-context.tsx  GameProvider/useGame — status + chat state + send methods
+.env.example          template for VITE_* config; .env.development = local dev defaults
 src-tauri/            Tauri desktop shell (default scaffold)
 dist/                 Vite build output (gitignored)
 ```
@@ -96,8 +113,9 @@ dist/                 Vite build output (gitignored)
 - **Page fidelity**: pages that were self-contained in the old client are ported with real
   behavior (About, Formation, the Actions action-selector/travel-route UI, theme Settings).
   Pages that depended on the old `game-context` (live server state) are **themed placeholders**
-  for now (`PagePlaceholder`) until the data layer lands — they are intentionally not faked
-  with invented game data. Don't invent server/state shapes; see §6.
+  for now (`PagePlaceholder`) — they are intentionally not faked with invented game data. The
+  one exception is **chat**, which is real (see §6); the ChatPanel is wired to the backend.
+  Don't invent server/state shapes; see §6 and §7.
 
 ## 5. The Overview card system
 
@@ -117,7 +135,52 @@ the client's visual language.
   same way — don't early-return on a non-reactive read.
 - Card body data is currently **static placeholder** content.
 
-## 6. Conventions & open items
+## 6. Data layer (server connection)
+
+The client talks to `../backend` over HTTP + WebSocket. The layer lives in `src/lib/` and is
+exposed through the **game context** ([game-context.tsx](src/lib/game-context.tsx)):
+`GameProvider` wraps the router in [App.tsx](src/App.tsx); components call `useGame()`.
+
+**Grounded in the real backend — do not invent contracts.** [protocol.ts](src/lib/protocol.ts)
+mirrors the backend's actual serde types (cite the Rust files in its header). What the backend
+serves **today**:
+
+- **Auth** (REST, [api.ts](src/lib/api.ts)): `POST /api/login`, `POST /api/register` →
+  plain-text UUID session token. Both require a Cloudflare Turnstile `cfToken`.
+- **WebSocket** ([connection.ts](src/lib/connection.ts)): connect to `/ws` offering two
+  subprotocols — `grindshell.auth.<token>` and a per-attempt `<nonce>`. The server echoes the
+  nonce as the selected subprotocol; the client **verifies the echo and severs on mismatch**
+  (accounts.md anti-hijack). Auto-reconnect with backoff.
+- **Chat** (the only live gameplay surface): send/join/leave/create rooms, DMs, moderation
+  (`ClientData`); receive `chatRoomMsg` / `chatDm` / `chatSystem` / `ack` / `nack`
+  (`ServerMessage`). The context normalizes these into per-room `ChatEntry[]` the ChatPanel
+  renders. Built-in rooms (`global`/`main`/`help`/`trade`) come from chat.md canon.
+
+**Not present on the wire** (so not modeled here): any game-state sync — inventory, formation,
+actions, combat, ticks, area. The backend accepts non-chat messages but silently drops them
+server-side (the game engine isn't wired to the socket yet). When those land, add their message
+variants to `protocol.ts` and grow the context; until then gameplay pages stay on local
+placeholder data.
+
+**Auth gate.** [App.tsx](src/App.tsx) shows [LoginRegister](src/pages/LoginRegister.tsx) until
+the client is authenticated; only then does it mount `GameProvider` + the router. "Authed" is
+tracked by global signals in [auth.ts](src/lib/auth.ts): a real session token
+(`localStorage` key `grindshell.token`) **or** an offline dev session. Login/register submit to
+the REST API, store the returned token via `setToken`, and the gate flips reactively;
+**Settings → Sign out** calls `clearAuth` to return to the gate. Login is a **gate, not a
+route** — it lives outside the router and the persistent shell. A Cloudflare Turnstile
+(`cfToken`) is sent with login/register; when no `VITE_CF_TURNSTILE_SITEKEY` is configured the
+widget is skipped and an empty token is sent (fine for local dev / the backend's test build).
+
+**Offline by default.** `config.uiDev` (env `VITE_UI_DEV`, default on) runs the client with no
+network — no REST, no socket — and chat **echoes locally** so the UI is usable in preview
+without a server. In `uiDev` the login screen offers a **"Continue offline"** button that
+enters the game without contacting the server; a real login still works if endpoints are set.
+With `uiDev=0`, the context connects whenever a token is present. Note the backend has no
+password-recovery endpoint yet, so the "forgot password" view is an informational stub.
+Config + endpoints: [config.ts](src/lib/config.ts) / `.env.example`.
+
+## 7. Conventions & open items
 
 - **Git is the user's to drive.** Do **not** run mutating git commands — no `git commit`,
   `git push`, `git merge`, `git rebase`, `git reset`, branch creation, tag, or stash. The
@@ -125,10 +188,12 @@ the client's visual language.
   `git diff`, `git log`) is fine. Leave changes in the working tree for the user to review
   and commit.
 - Mirror the pinned versions in §1 when adding the deps the design names. Don't swap pnpm.
-- **No invented game/server contracts.** The old client's websocket protocol, auth/login,
-  and `game-context` state store are not ported. When a page needs live data, surface the
-  need rather than hardcoding a fake shape — the canonical data model is decided in
-  `knowledge-base/` and implemented server-side first.
+- **No invented game/server contracts.** Wire types in [protocol.ts](src/lib/protocol.ts)
+  mirror the backend's real serde definitions (auth + chat). Anything the backend doesn't yet
+  serve (inventory, formation, actions, combat, ticks, area) is **not** modeled — when a page
+  needs that data, surface the need rather than hardcoding a fake shape. The canonical data
+  model is decided in `knowledge-base/` and implemented server-side first; grow the data layer
+  to match the backend, not ahead of it.
 - Run `pnpm typecheck` before considering a change done. `tsconfig` is strict
   (`noUnusedLocals`/`noUnusedParameters` on).
 - Solid idioms: `class` not `className`; `<For>`/`<Index>` over `.map`; `<Show>`/`<Switch>`

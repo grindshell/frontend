@@ -1,5 +1,6 @@
 import { For, createSignal, type ParentProps } from "solid-js";
 import { THEMES, loadTheme, setTheme } from "../../lib/theme";
+import { clearAuth } from "../../lib/auth";
 
 export function Settings() {
   const [theme, setThemeSignal] = createSignal(loadTheme());
@@ -47,6 +48,16 @@ export function Settings() {
               Reset card layout
             </button>
             <p class="label text-base-content/45">Restores the default Overview grid.</p>
+          </fieldset>
+        </Tile>
+
+        <Tile>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Session</legend>
+            <button class="btn btn-sm btn-soft" onClick={() => clearAuth()}>
+              Sign out
+            </button>
+            <p class="label text-base-content/45">Returns to the login screen.</p>
           </fieldset>
         </Tile>
       </div>
