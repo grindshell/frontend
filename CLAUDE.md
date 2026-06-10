@@ -75,12 +75,12 @@ src/
     TextInput.tsx     labelled input with validation-error / optional hint
     CFTurnstile.tsx   Cloudflare Turnstile widget (lazy script load, optional)
     GdprConsent.tsx   one-time "stores data locally" notice
-  overview/
-    Overview.tsx      the "/" dashboard: 12-col grid of moveable/resizeable cards
-    cards.tsx         card shell registry + per-card bodies (tiered by area)
   pages/
     LoginRegister.tsx the auth gate (login / register / forgot) — see §6
     game/             one component per route (Actions, Area, Formation, …) — see §4
+      overview/
+        Overview.tsx  the "/" dashboard: 12-col grid of moveable/resizeable cards
+        cards.tsx     card shell registry + per-card bodies (tiered by area)
   lib/
     theme.ts          DaisyUI theme list + load/apply/persist (localStorage)
     auth.ts           global auth signals (token / offline) + sign-in/out helpers
@@ -119,7 +119,7 @@ dist/                 Vite build output (gitignored)
 
 ## 5. The Overview card system
 
-The Overview ([src/overview/](src/overview)) is a 12-column CSS grid of cards, each a
+The Overview ([src/pages/game/overview/](src/pages/game/overview)) is a 12-column CSS grid of cards, each a
 condensed view of an underlying game page. It is the most built-out screen and the model for
 the client's visual language.
 
@@ -128,7 +128,7 @@ the client's visual language.
 - **Arrange mode** (header toggle) enables HTML5 drag-to-reorder (via a grip handle),
   edge/corner **resize** handles, spacers, and reset. Outside arrange mode a card click
   navigates to its route.
-- **Card registry**: [cards.tsx](src/overview/cards.tsx) exports `CARDS` (id, title, route,
+- **Card registry**: [cards.tsx](src/pages/game/overview/cards.tsx) exports `CARDS` (id, title, route,
   default span, optional badge, `Body`). To add a card: append to `CARDS`.
 - **Tiers**: each card `Body` switches on `tier(span)` (micro/small/medium/large by area) via
   `<Switch>/<Match>` so it re-flows live as it's resized. Keep new card bodies reactive the

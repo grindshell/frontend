@@ -1,5 +1,5 @@
 import type { RouteDefinition } from "@solidjs/router";
-import { Overview } from "./overview/Overview";
+import { Overview } from "./pages/game/overview/Overview";
 import { Actions } from "./pages/game/Actions";
 import { Formation } from "./pages/game/Formation";
 import { Settings } from "./pages/game/Settings";

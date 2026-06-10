@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createSignal, type JSX } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { useNavigate } from "@solidjs/router";
-import { Icon } from "../components/Icon";
+import { Icon } from "../../../components/Icon";
 import { CARDS, CARDS_BY_ID, type Span } from "./cards";
 
 /* ---------------- layout model + persistence ---------------- */
