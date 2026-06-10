@@ -8,7 +8,7 @@ import {
   createSignal,
 } from "solid-js";
 import { useGame } from "../../lib/game-context";
-import type { ActionStatsView, ActionView } from "../../lib/protocol";
+import type { ActionStatsView, ActionView, RewardsView } from "../../lib/protocol";
 
 // The idle-action screen: a tabbed per-action details column on the left and
 // the collapsible action log (also the future MUD-interaction surface) on the
@@ -278,7 +278,7 @@ function CurrentCombat(props: { act: ActionView }) {
 
       <div>
         <p class="text-xs text-base-content/45 mb-1">Accrued (commits when the action ends)</p>
-        <TallyBadges kills={props.act.tally.kills} credits={props.act.tally.credits} resources={props.act.tally.resources} />
+        <TallyBadges tally={props.act.tally} />
       </div>
     </div>
   );
@@ -341,15 +341,29 @@ function StatsPanel(props: { title: string; stats: ActionStatsView; modifier?: A
   );
 }
 
-function TallyBadges(props: { kills: number; credits: number; resources: Record<string, number> }) {
+function TallyBadges(props: { tally: RewardsView }) {
+  const c = () => props.tally.currencies;
   return (
     <div class="flex flex-wrap gap-1">
-      <span class="badge badge-sm badge-soft">☠ {props.kills} kills</span>
-      <span class="badge badge-sm badge-soft">💰 {props.credits} CR</span>
-      <For each={Object.entries(props.resources)}>
+      <span class="badge badge-sm badge-soft">☠ {props.tally.kills} kills</span>
+      <span class="badge badge-sm badge-soft">💰 {c().credits} CR</span>
+      <Show when={c().dust > 0}>
+        <span class="badge badge-sm badge-soft">✨ {c().dust} DU</span>
+      </Show>
+      <Show when={c().rousingDevices > 0}>
+        <span class="badge badge-sm badge-soft">🔅 {c().rousingDevices} RO</span>
+      </Show>
+      <For each={Object.entries(props.tally.general).filter(([, q]) => q > 0)}>
         {([id, qty]) => (
           <span class="badge badge-sm badge-soft">
-            {qty} {id}
+            {qty} {id.toUpperCase()}
+          </span>
+        )}
+      </For>
+      <For each={props.tally.items}>
+        {(s) => (
+          <span class="badge badge-sm badge-soft">
+            {s.qty}× {s.name}
           </span>
         )}
       </For>
@@ -379,11 +393,7 @@ function RewardView() {
       <div class="bg-base-200/40 rounded-box p-4">
         <p class="text-xs text-base-content/45 mb-2">Rewards committed</p>
         <div class="flex justify-center">
-          <TallyBadges
-            kills={r().rewards.kills}
-            credits={r().rewards.credits}
-            resources={r().rewards.resources}
-          />
+          <TallyBadges tally={r().rewards} />
         </div>
       </div>
       <div class="flex justify-center gap-2">

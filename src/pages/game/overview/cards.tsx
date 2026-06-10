@@ -8,6 +8,7 @@ import {
   onMount,
   type JSX,
 } from "solid-js";
+import { useGame } from "../../../lib/game-context";
 
 // Overview cards — condensed views of the underlying game pages. Each body
 // receives a { col, row } span and adapts its density to the card's area.
@@ -268,28 +269,25 @@ function MapCard(props: { span: Span }) {
 }
 
 /* ---------- INVENTORY ---------- */
-const INV_ITEMS = [
-  { n: "Iron Ore", q: 142, w: "kg", t: "resource" },
-  { n: "Copper Ingot", q: 31, w: "kg", t: "material" },
-  { n: "Rationed Bread", q: 12, w: "ct", t: "consumable" },
-  { n: "Bone Splinter", q: 8, w: "ct", t: "reagent" },
-  { n: "Steel Hauberk", q: 1, w: "eq", t: "armor", eq: true },
-  { n: "Pickaxe (Tier 2)", q: 1, w: "eq", t: "tool", eq: true },
-  { n: "Bandage", q: 6, w: "ct", t: "consumable" },
-  { n: "Pyrite Shard", q: 44, w: "ct", t: "reagent" },
-  { n: "Lockpick", q: 3, w: "ct", t: "tool" },
-  { n: "Healing Draught", q: 2, w: "ct", t: "consumable" },
-];
+// Live committed holdings from the game context (the server's authoritative
+// `inventory` push). Zeros until the first push (offline / not yet connected).
 
 function InventoryCard(props: { span: Span }) {
+  const game = useGame();
   const T = () => tier(props.span);
+  const cur = () => game.world.inventory?.currencies;
+  const gen = () => game.world.inventory?.general;
+  const items = () => game.world.inventory?.items ?? [];
+  const fmt = (v: number | undefined) => (v ?? 0).toLocaleString("en-US");
+
   return (
     <Switch>
       <Match when={T() === "micro"}>
         <div class="h-full flex flex-col justify-center text-center">
           <div class="text-[10px] uppercase tracking-wider text-base-content/50">credits</div>
           <div class="font-mono text-base leading-tight">
-            12,480<span class="text-xs text-base-content/40">cr</span>
+            {fmt(cur()?.credits)}
+            <span class="text-xs text-base-content/40">cr</span>
           </div>
         </div>
       </Match>
@@ -299,35 +297,43 @@ function InventoryCard(props: { span: Span }) {
           <div class="grid grid-cols-2 gap-1.5">
             <div class="rounded bg-base-300/50 px-1.5 py-1">
               <div class="text-[9px] uppercase tracking-wider text-base-content/50">cr</div>
-              <div class="font-mono text-sm">12,480</div>
+              <div class="font-mono text-sm">{fmt(cur()?.credits)}</div>
             </div>
             <div class="rounded bg-base-300/50 px-1.5 py-1">
               <div class="text-[9px] uppercase tracking-wider text-base-content/50">dust</div>
-              <div class="font-mono text-sm">847</div>
+              <div class="font-mono text-sm">{fmt(cur()?.dust)}</div>
             </div>
           </div>
           <div class="text-[10px] font-mono text-base-content/55 flex justify-between mt-auto pt-1 border-t border-base-300/60">
-            <span>{INV_ITEMS.length} items</span>
-            <span>183 / 240 kg</span>
+            <span>{items().length} stacks</span>
+            <span>∞ capacity</span>
           </div>
         </div>
       </Match>
 
       <Match when={true}>
         <div class="flex flex-col h-full">
-          <div class="grid grid-cols-2 gap-2 mb-3">
-            <div class="rounded bg-base-300/50 px-2 py-1.5">
-              <div class="text-[10px] uppercase tracking-wider text-base-content/50">credits</div>
-              <div class="font-mono text-lg leading-tight">
-                12,480<span class="text-xs text-base-content/40">cr</span>
-              </div>
-            </div>
-            <div class="rounded bg-base-300/50 px-2 py-1.5">
-              <div class="text-[10px] uppercase tracking-wider text-base-content/50">dust</div>
-              <div class="font-mono text-lg leading-tight">
-                847<span class="text-xs text-base-content/40">d</span>
-              </div>
-            </div>
+          <div class="grid grid-cols-3 gap-2 mb-2">
+            <Stat label="credits" value={fmt(cur()?.credits)} sub="cr" compact />
+            <Stat label="dust" value={fmt(cur()?.dust)} sub="du" compact />
+            <Stat label="rousing" value={fmt(cur()?.rousingDevices)} sub="ro" compact />
+          </div>
+          <div class="grid grid-cols-4 gap-1.5 mb-3">
+            <For
+              each={[
+                ["bio", gen()?.bio] as const,
+                ["met", gen()?.met] as const,
+                ["ele", gen()?.ele] as const,
+                ["liq", gen()?.liq] as const,
+              ]}
+            >
+              {([id, q]) => (
+                <div class="rounded bg-base-300/50 px-1.5 py-1 text-center">
+                  <div class="text-[9px] uppercase tracking-wider text-base-content/50">{id}</div>
+                  <div class="font-mono text-sm">{fmt(q)}</div>
+                </div>
+              )}
+            </For>
           </div>
           <div
             class={
@@ -337,38 +343,36 @@ function InventoryCard(props: { span: Span }) {
           >
             <span class="flex-1">item</span>
             <Show when={T() === "large"}>
-              <span class="w-16">type</span>
+              <span class="w-20">type</span>
             </Show>
             <span>qty</span>
           </div>
           <ul class="overflow-y-auto flex-1 -mx-1 px-1 text-sm divide-y divide-base-300/40">
-            <For each={INV_ITEMS}>
+            <For
+              each={items()}
+              fallback={
+                <li class="py-2 text-xs text-base-content/45">
+                  No items yet — rewards commit when an action ends.
+                </li>
+              }
+            >
               {(it) => (
                 <li class="flex items-baseline gap-2 py-1">
-                  <div class="flex items-center gap-1.5 min-w-0 flex-1">
-                    <Show when={it.eq}>
-                      <span class="text-[9px] text-success border border-success/40 px-1 rounded">
-                        EQ
-                      </span>
-                    </Show>
-                    <span class="truncate">{it.n}</span>
-                  </div>
+                  <span class="truncate min-w-0 flex-1">{it.name}</span>
                   <Show when={T() === "large"}>
-                    <span class="text-[10px] text-base-content/45 uppercase tracking-wider w-16 shrink-0">
-                      {it.t}
+                    <span class="text-[10px] text-base-content/45 uppercase tracking-wider w-20 shrink-0">
+                      {it.kind}
+                      {it.category ? `·${it.category}` : ""}
                     </span>
                   </Show>
-                  <span class="font-mono text-base-content/80 shrink-0">
-                    {it.q}
-                    <span class="text-base-content/40 text-xs">{it.w}</span>
-                  </span>
+                  <span class="font-mono text-base-content/80 shrink-0">{it.qty}</span>
                 </li>
               )}
             </For>
           </ul>
           <div class="mt-2 pt-2 border-t border-base-300/60 flex justify-between text-[11px] font-mono text-base-content/55">
-            <span>weight</span>
-            <span>183 / 240 kg</span>
+            <span>{items().length} stacks</span>
+            <span>∞ capacity</span>
           </div>
         </div>
       </Match>
@@ -628,7 +632,7 @@ function LogCard(props: { span: Span }) {
 export const CARDS: CardDef[] = [
   { id: "action", title: "Current Action", route: "/actions", defSpan: { col: 4, row: 2 }, Body: ActionCard },
   { id: "map", title: "Map", route: "/area", defSpan: { col: 4, row: 2 }, Body: MapCard },
-  { id: "inventory", title: "Inventory", route: "/profile", defSpan: { col: 4, row: 4 }, Body: InventoryCard },
+  { id: "inventory", title: "Inventory", route: "/inventory", defSpan: { col: 4, row: 4 }, Body: InventoryCard },
   { id: "formation", title: "Formation", route: "/formation", defSpan: { col: 4, row: 2 }, Body: FormationCard },
   {
     id: "buy",

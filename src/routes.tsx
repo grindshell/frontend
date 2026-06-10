@@ -2,6 +2,7 @@ import type { RouteDefinition } from "@solidjs/router";
 import { Overview } from "./pages/game/overview/Overview";
 import { Actions } from "./pages/game/Actions";
 import { Formation } from "./pages/game/Formation";
+import { Inventory } from "./pages/game/Inventory";
 import { Settings } from "./pages/game/Settings";
 import { About } from "./pages/game/About";
 import {
@@ -21,6 +22,7 @@ export const Routes: RouteDefinition[] = [
   { path: "/actions", component: Actions },
   { path: "/area", component: Area },
   { path: "/formation", component: Formation },
+  { path: "/inventory", component: Inventory },
   { path: "/global-market", component: GlobalMarket },
   { path: "/profile", component: Profile },
   { path: "/rankings", component: Rankings },

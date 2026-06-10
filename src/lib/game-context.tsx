@@ -27,9 +27,14 @@ import type {
   ActionView,
   ClientData,
   CombatView,
+  CurrenciesView,
   EnemyInfo,
+  GearView,
+  GeneralResourcesView,
+  ItemStackView,
   RewardsView,
   ServerMessage,
+  UnitView,
 } from "./protocol";
 
 /** Canonical built-in rooms (knowledge-base/design/chat.md "Built-in rooms"). */
@@ -84,6 +89,27 @@ export type RewardReport = {
 export const actionTarget = (action: ActionView): string =>
   action.combat?.enemyName ?? action.kind;
 
+/** The committed holdings (the `inventory` push): authoritative server
+ * snapshot, replaced wholesale — never accumulated client-side. */
+export type InventoryState = {
+  currencies: CurrenciesView;
+  general: GeneralResourcesView;
+  /** Item stacks, sorted by template id server-side. */
+  items: ItemStackView[];
+  /** Unequipped gear instances (equipped gear lives on the roster units). */
+  gear: GearView[];
+};
+
+/** A reward tally as one log-friendly line ("2 kills, 9 credits, 1 met, …"). */
+export const summarizeRewards = (r: RewardsView): string => {
+  const parts = [`${r.kills} kills`, `${r.currencies.credits} credits`];
+  if (r.currencies.dust > 0) parts.push(`${r.currencies.dust} dust`);
+  if (r.currencies.rousingDevices > 0) parts.push(`${r.currencies.rousingDevices} rousing devices`);
+  for (const [id, q] of Object.entries(r.general)) if (q > 0) parts.push(`${q} ${id}`);
+  for (const s of r.items) parts.push(`${s.qty}× ${s.name}`);
+  return parts.join(", ");
+};
+
 /** The game-engine slice of client state: zone, the in-flight idle action
  * (baseline from `gameState`, folded with `actionTick` deltas), the per-zone
  * enemy roster cache, and the action log. */
@@ -93,6 +119,10 @@ type WorldState = {
   /** Zone ("x,y,z") → its knowledge-filtered enemy roster, cached per server
    * push (the server expects the client to cache these). */
   enemies: Record<string, EnemyInfo[]>;
+  /** Committed holdings; null until the first server push (offline mode). */
+  inventory: InventoryState | null;
+  /** Owned units (the `roster` push); null until the first server push. */
+  roster: UnitView[] | null;
   lastRewards: RewardReport | null;
   /** The last combat request, for quick restart. */
   lastCombat: { enemy: string; kc: number } | null;
@@ -117,6 +147,12 @@ export type Game = {
   startCombat: (enemyId: string, kc: number) => void;
   /** Manually stop the in-flight idle action, committing accrued rewards. */
   stopAction: () => void;
+  /** Equip an unequipped gear instance onto a roster unit; the server acks
+   * with fresh inventory + roster snapshots or nacks with the reason
+   * (`onError`). */
+  equipGear: (unit: string, instanceId: number, onError?: (reason?: string) => void) => void;
+  /** Unequip a gear instance (by id) back into the inventory. */
+  unequipGear: (unit: string, instanceId: number, onError?: (reason?: string) => void) => void;
   /** Dismiss the reward view. */
   clearRewards: () => void;
   /** Append a local (client-only) line to the action log. */
@@ -136,6 +172,8 @@ export function GameProvider(props: ParentProps) {
     zone: "0,0,0",
     action: null,
     enemies: {},
+    inventory: null,
+    roster: null,
     lastRewards: null,
     lastCombat: null,
     log: [],
@@ -222,6 +260,19 @@ export function GameProvider(props: ParentProps) {
       case "enemyList":
         setWorld("enemies", msg.zone, msg.enemies);
         break;
+      case "inventory":
+        // Authoritative snapshot: replace, never merge or accumulate.
+        setWorld("inventory", {
+          currencies: msg.currencies,
+          general: msg.general,
+          items: msg.items,
+          gear: msg.gear,
+        });
+        break;
+      case "roster":
+        // Authoritative snapshot: replace.
+        setWorld("roster", msg.units);
+        break;
       case "actionTick": {
         const act = world.action;
         if (act) {
@@ -285,13 +336,9 @@ export function GameProvider(props: ParentProps) {
           stopped: msg.stopped,
           rewards: msg.rewards,
         });
-        const r = msg.rewards;
-        const resources = Object.entries(r.resources)
-          .map(([id, q]) => `${q} ${id}`)
-          .join(", ");
         pushLog(
           `${msg.stopped ? "Stopped" : "Finished"} ${msg.kind} vs ${msg.targetName}: ` +
-            `${r.kills} kills, ${r.credits} credits${resources ? `, ${resources}` : ""}.`,
+            `${summarizeRewards(msg.rewards)}.`,
           "reward",
         );
         break;
@@ -428,6 +475,24 @@ export function GameProvider(props: ParentProps) {
     );
   };
 
+  const equipGear = (unit: string, instanceId: number, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — gear needs a server connection");
+      return;
+    }
+    // The ack rides with fresh inventory + roster snapshots; nothing is
+    // applied optimistically.
+    send({ t: "game", gt: "equipGear", unit, instanceId }, { onNack: onError });
+  };
+
+  const unequipGear = (unit: string, instanceId: number, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — gear needs a server connection");
+      return;
+    }
+    send({ t: "game", gt: "unequipGear", unit, instanceId }, { onNack: onError });
+  };
+
   const clearRewards = () => setWorld("lastRewards", null);
 
   const logLocal = (text: string) => pushLog(text, "local");
@@ -508,6 +573,8 @@ export function GameProvider(props: ParentProps) {
     listEnemies,
     startCombat,
     stopAction,
+    equipGear,
+    unequipGear,
     clearRewards,
     logLocal,
   };

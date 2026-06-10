@@ -57,7 +57,16 @@ export type ChatData =
 export type GameData =
   | { gt: "listEnemies" }
   | { gt: "changeAction"; kind: "combat"; enemy: string; kc: number }
-  | { gt: "stopAction" };
+  | { gt: "stopAction" }
+  // Equip an unequipped gear instance onto a roster unit. The slot comes from
+  // the gear's template (occupied single slots swap back to the inventory,
+  // trinkets append); stat requirements are checked server-side against the
+  // unit's TRAINED levels only (items.md "Gear requirements") — a failure
+  // nacks with the failing stats.
+  | { gt: "equipGear"; unit: string; instanceId: number }
+  // Unequip by instance id (unique across slots and trinkets). Never refused
+  // for a worn piece — requirements gate equipping only.
+  | { gt: "unequipGear"; unit: string; instanceId: number };
 
 // Top-level inbound data, tagged on `t`. Chat ops are carried under `t: "chat"`
 // and game ops under `t: "game"`. `requestState` is a top-level *control*
@@ -99,12 +108,88 @@ export type EnemyInfo = {
   drops: string[];
 };
 
-/** An idle action's accrued (or final) reward tally (`RewardsView`). */
+/** The three numeric currencies (`CurrenciesView`, resources.md "Resource
+ * classes"), shared between the reward tally and the inventory snapshot. */
+export type CurrenciesView = {
+  credits: number;
+  dust: number;
+  rousingDevices: number;
+};
+
+/** The four bulk general resources (`GeneralResourcesView`). */
+export type GeneralResourcesView = {
+  bio: number;
+  met: number;
+  ele: number;
+  liq: number;
+};
+
+/** One fungible item stack (`ItemStackView`): an item-resource or consumable
+ * quantity with its display fields resolved server-side. `category` is the
+ * general-resource grouping of item resources (absent on consumables). */
+export type ItemStackView = {
+  id: string;
+  name: string;
+  kind: string;
+  category?: string;
+  qty: number;
+};
+
+/** An idle action's accrued (or final) reward tally (`RewardsView`). Gear
+ * drops ride `items` as ordinary stacks (`kind === "gear"`); unique instances
+ * are minted server-side when the tally commits. */
 export type RewardsView = {
   kills: number;
-  credits: number;
-  /** Resource id → quantity. */
-  resources: Record<string, number>;
+  currencies: CurrenciesView;
+  general: GeneralResourcesView;
+  items: ItemStackView[];
+};
+
+/** The six unit/gear stats (`UnitStatsView`, stats.md "Unit and gear stats"). */
+export type UnitStatsView = {
+  str: number;
+  vit: number;
+  dex: number;
+  agi: number;
+  int: number;
+  wis: number;
+};
+
+/** A skill grant: name + flat value (`SkillGrantView`). On a unit it is the
+ * trained level; on gear it is the value granted while equipped. */
+export type SkillGrantView = {
+  name: string;
+  value: number;
+};
+
+/** One owned gear instance (`GearView`, items.md "Gear instances and
+ * templates"), display fields resolved server-side. `requirements` are
+ * per-stat minimums vs a unit's TRAINED levels (0 = none) — sent so the
+ * client can preview equippability with the cheap stat check only. */
+export type GearView = {
+  instanceId: number;
+  template: string;
+  name: string;
+  /** "headwear" | "torso" | "legs" | "mainHand" | "offHand" | "trinket" */
+  slot: string;
+  stats: UnitStatsView;
+  requirements: UnitStatsView;
+  skills?: SkillGrantView[];
+  gearScore: number;
+  enhancement: number;
+};
+
+/** One roster unit (`UnitView`, units.md): identity, trained vs effective
+ * (trained + gear) stats, trained skills, and equipped gear. */
+export type UnitView = {
+  id: string;
+  name: string;
+  title?: string;
+  isPlayer: boolean;
+  trained: UnitStatsView;
+  effective: UnitStatsView;
+  skills: SkillGrantView[];
+  equipment: GearView[];
 };
 
 /** One attack within an idle-combat round (`AttackReport`), reported in actual
@@ -194,7 +279,24 @@ export type ServerMessage =
       kcDone: number;
       stopped: boolean;
       rewards: RewardsView;
-    };
+    }
+  // The authoritative inventory snapshot (inventory.md): committed holdings,
+  // pushed at connect, on `requestState`, and after every mutation (a commit,
+  // an equip/unequip). The client REPLACES its inventory from this — per-tick
+  // tallies are narration, never client-side accumulation. `items` is sorted
+  // by template id; `gear` is the UNEQUIPPED instances in mint order
+  // (equipped gear lives on the roster units).
+  | {
+      t: "inventory";
+      currencies: CurrenciesView;
+      general: GeneralResourcesView;
+      items: ItemStackView[];
+      gear: GearView[];
+    }
+  // The authoritative roster snapshot (units.md): every owned unit with
+  // trained/effective stats and equipped gear. Pushed at connect, on
+  // `requestState`, and after every equip/unequip. The client REPLACES.
+  | { t: "roster"; units: UnitView[] };
 
 /**
  * Parse a raw WebSocket text frame into typed `ServerMessage`s.

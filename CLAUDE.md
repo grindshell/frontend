@@ -165,10 +165,27 @@ serves **today**:
   `actionTick` is a flat delta union whose `attacks`/`enemy*` fields fold into that slice.
   The context keeps this in `world` (zone, action, enemy cache, reward report, action log);
   the Actions page and TopBar render it.
+- **Inventory** (INVENTORY_IMPL.md Phase 1): the `inventory` push is the **authoritative
+  holdings snapshot** — currencies (`credits`/`dust`/`rousingDevices`), the four bulk general
+  resources (`bio`/`met`/`ele`/`liq`), and fungible item stacks (`ItemStackView`, display
+  fields resolved server-side). Pushed at connect, on `requestState`, and after every commit
+  (Resolution / manual stop); the client **replaces** `world.inventory` wholesale — per-tick
+  tallies are narration, never accumulation. `RewardsView` (the tally) shares the same
+  currency/general/item-stack shapes. Rendered by the sidebar resources quick view, the
+  Overview Inventory card, and the [Inventory page](src/pages/game/Inventory.tsx).
 
-**Not present on the wire** (so not modeled here): inventory, formation, travel/area,
-harvesting/crafting actions, markets. When those land, add their message variants to
-`protocol.ts` and grow the context; until then those pages stay on local placeholder data.
+- **Roster & gear** (INVENTORY_IMPL.md Phase 2): the `roster` push is the authoritative unit
+  snapshot (`UnitView`: trained vs effective stats, trained skills, equipped `GearView`s),
+  replaced wholesale like the inventory; the inventory snapshot carries the **unequipped**
+  gear instances. `equipGear`/`unequipGear` ops are instance-id addressed; nothing is applied
+  optimistically — the ack rides with fresh inventory + roster snapshots. `GearView.requirements`
+  lets the client preview equippability with the **cheap stat check only** (vs trained levels;
+  items.md — the server is authoritative and the script hook is never previewed). Rendered by
+  the Inventory page's gear section + Units & equipment panel.
+
+**Not present on the wire** (so not modeled here): formation *editing*, consumable use,
+travel/area, harvesting/crafting actions, markets. When those land, add their message variants
+to `protocol.ts` and grow the context; until then those pages stay on local placeholder data.
 
 **Auth gate.** [App.tsx](src/App.tsx) shows [LoginRegister](src/pages/LoginRegister.tsx) until
 the client is authenticated; only then does it mount `GameProvider` + the router. "Authed" is

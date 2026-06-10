@@ -1,0 +1,365 @@
+import { For, Show, createMemo, createSignal } from "solid-js";
+import { useGame } from "../../lib/game-context";
+import type { GearView, ItemStackView, UnitStatsView, UnitView } from "../../lib/protocol";
+
+// The inventory screen: the player's committed holdings (inventory.md), live
+// from the server's authoritative `inventory` push, plus the gear/equipment
+// surface over the roster push. Rewards land here only at action end
+// (actions.md "Reward delivery") — accruing tallies live on the Actions
+// screen, not here. The consumable-use surface arrives with its phase
+// (INVENTORY_IMPL.md).
+
+/** Display metadata for the fixed resource classes (resources.md). */
+const CURRENCY_ROWS = [
+  { key: "credits", label: "Credits", short: "cr" },
+  { key: "dust", label: "Dust", short: "du" },
+  { key: "rousingDevices", label: "Rousing Devices", short: "ro" },
+] as const;
+
+const GENERAL_ROWS = [
+  { key: "bio", label: "Biological" },
+  { key: "met", label: "Metallurgical" },
+  { key: "ele", label: "Electrical" },
+  { key: "liq", label: "Liquid" },
+] as const;
+
+const fmt = (v: number | undefined) => (v ?? 0).toLocaleString("en-US");
+
+export function Inventory() {
+  const game = useGame();
+  const inv = () => game.world.inventory;
+
+  // Item stacks split by kind; item resources sorted by category then name so
+  // the grouping label reads top-to-bottom.
+  const resources = createMemo(() =>
+    (inv()?.items ?? [])
+      .filter((s) => s.kind === "resource")
+      .slice()
+      .sort(
+        (a, b) =>
+          (a.category ?? "").localeCompare(b.category ?? "") || a.name.localeCompare(b.name),
+      ),
+  );
+  const consumables = createMemo(() => (inv()?.items ?? []).filter((s) => s.kind === "consumable"));
+  const other = createMemo(() =>
+    (inv()?.items ?? []).filter((s) => s.kind !== "resource" && s.kind !== "consumable"),
+  );
+
+  return (
+    <section class="size-full flex flex-col" data-screen-label="Inventory">
+      <header class="flex items-baseline gap-3 mb-3 px-1">
+        <h1 class="text-xl font-mono tracking-tight">Inventory</h1>
+        <span class="text-xs text-base-content/45">
+          // committed holdings — rewards land here when an action ends
+        </span>
+      </header>
+
+      <div class="flex flex-col gap-4 overflow-y-auto pr-1">
+        <Show when={!inv()}>
+          <div class="bg-base-200/40 rounded-box p-4 text-sm text-base-content/55">
+            Waiting for the server's inventory snapshot…
+          </div>
+        </Show>
+
+        {/* Numeric currencies (resources.md "Resource classes"). */}
+        <div>
+          <p class="text-xs text-base-content/45 mb-1 px-1">Currencies</p>
+          <div class="grid grid-cols-3 gap-2">
+            <For each={CURRENCY_ROWS}>
+              {(row) => (
+                <div class="bg-base-200/40 rounded-box px-3 py-2">
+                  <div class="text-[10px] uppercase tracking-wider text-base-content/50">
+                    {row.label}
+                  </div>
+                  <div class="font-mono text-lg leading-tight">
+                    {fmt(inv()?.currencies[row.key])}
+                    <span class="text-xs text-base-content/40 ml-0.5">{row.short}</span>
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+
+        {/* Bulk general resources. */}
+        <div>
+          <p class="text-xs text-base-content/45 mb-1 px-1">General resources</p>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <For each={GENERAL_ROWS}>
+              {(row) => (
+                <div class="bg-base-200/40 rounded-box px-3 py-2">
+                  <div class="text-[10px] uppercase tracking-wider text-base-content/50">
+                    {row.label} <span class="text-base-content/35">({row.key})</span>
+                  </div>
+                  <div class="font-mono text-lg leading-tight">{fmt(inv()?.general[row.key])}</div>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+
+        {/* Item stacks (inventory.md "Stack semantics"). */}
+        <div class="grid md:grid-cols-2 gap-4">
+          <StackTable
+            title="Item resources"
+            hint="discrete, named drops — grouped by category"
+            stacks={resources()}
+            showCategory
+            empty="No item resources yet."
+          />
+          <StackTable
+            title="Consumables"
+            hint="usable once the consumable-use surface lands"
+            stacks={consumables()}
+            empty="No consumables yet."
+          />
+        </div>
+        <Show when={other().length > 0}>
+          <StackTable title="Other items" stacks={other()} empty="" />
+        </Show>
+
+        {/* Gear & equipment (items.md "Gear instances and templates"). */}
+        <GearSection />
+      </div>
+    </section>
+  );
+}
+
+const STAT_KEYS = [
+  ["str", "STR"],
+  ["vit", "VIT"],
+  ["dex", "DEX"],
+  ["agi", "AGI"],
+  ["int", "INT"],
+  ["wis", "WIS"],
+] as const;
+
+/** "+2 STR, +1 INT" — only the nonzero stats of a gear piece. */
+const statsSummary = (s: UnitStatsView): string =>
+  STAT_KEYS.filter(([k]) => s[k] !== 0)
+    .map(([k, label]) => `${s[k] > 0 ? "+" : ""}${s[k]} ${label}`)
+    .join(", ");
+
+/** The cheap stat-check preview (items.md "Gear requirements"): which of the
+ * piece's minimums the unit's TRAINED levels fail. The authoritative check —
+ * including the eventual `on_gear_equip_check` hook — is the server's. */
+const failingReqs = (g: GearView, unit: UnitView): string[] =>
+  STAT_KEYS.filter(([k]) => g.requirements[k] > 0 && unit.trained[k] < g.requirements[k]).map(
+    ([k, label]) => `${label} ${g.requirements[k]}`,
+  );
+
+/** Unequipped gear (with equip controls) and the per-unit equipment panel,
+ * both live over the authoritative inventory + roster pushes. */
+function GearSection() {
+  const game = useGame();
+  const gear = () => game.world.inventory?.gear ?? [];
+  const roster = () => game.world.roster ?? [];
+  const [unitId, setUnitId] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+
+  // Equip target: the selected unit, defaulting to the first roster unit.
+  const target = createMemo(
+    () => roster().find((u) => u.id === unitId()) ?? roster()[0] ?? null,
+  );
+
+  const equip = (instanceId: number) => {
+    const unit = target();
+    if (!unit) return;
+    setError(null);
+    game.equipGear(unit.id, instanceId, (reason) => setError(reason ?? "equip failed"));
+  };
+  const unequip = (unit: string, instanceId: number) => {
+    setError(null);
+    game.unequipGear(unit, instanceId, (reason) => setError(reason ?? "unequip failed"));
+  };
+
+  return (
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="bg-base-200/40 rounded-box p-3">
+        <div class="flex items-baseline gap-2 mb-2 flex-wrap">
+          <p class="text-xs text-base-content/45">Gear</p>
+          <span class="text-[10px] text-base-content/35">// unequipped instances</span>
+          <Show when={roster().length > 1}>
+            <select
+              class="select select-xs ml-auto"
+              value={target()?.id ?? ""}
+              onChange={(e) => setUnitId(e.currentTarget.value)}
+            >
+              <For each={roster()}>{(u) => <option value={u.id}>{u.name}</option>}</For>
+            </select>
+          </Show>
+        </div>
+        <Show
+          when={gear().length > 0}
+          fallback={<p class="text-xs text-base-content/40 py-1">No unequipped gear.</p>}
+        >
+          <table class="table table-xs">
+            <thead>
+              <tr class="text-[10px] uppercase tracking-wider text-base-content/45">
+                <th class="font-normal">piece</th>
+                <th class="font-normal">slot</th>
+                <th class="font-normal text-right">score</th>
+                <th class="font-normal w-20" />
+              </tr>
+            </thead>
+            <tbody>
+              <For each={gear()}>
+                {(g) => {
+                  const failing = createMemo(() => (target() ? failingReqs(g, target()!) : []));
+                  return (
+                    <tr>
+                      <td>
+                        <div class="truncate">{g.name}</div>
+                        <div class="text-[10px] text-base-content/45 font-mono">
+                          {statsSummary(g.stats) || "no stats"}
+                          <Show when={failing().length > 0}>
+                            <span class="text-warning"> · needs {failing().join(", ")}</span>
+                          </Show>
+                        </div>
+                      </td>
+                      <td class="font-mono text-base-content/55">{g.slot}</td>
+                      <td class="font-mono text-right">{g.gearScore}</td>
+                      <td class="text-right">
+                        <button
+                          class="btn btn-xs btn-soft"
+                          classList={{ "btn-disabled": failing().length > 0 }}
+                          title={
+                            failing().length > 0
+                              ? `Requires trained ${failing().join(", ")}`
+                              : `Equip on ${target()?.name ?? "—"}`
+                          }
+                          onClick={() => equip(g.instanceId)}
+                        >
+                          Equip
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                }}
+              </For>
+            </tbody>
+          </table>
+        </Show>
+        <Show when={error()}>
+          <p class="text-xs text-error mt-2">✗ {error()}</p>
+        </Show>
+      </div>
+
+      <div class="bg-base-200/40 rounded-box p-3">
+        <div class="flex items-baseline gap-2 mb-2">
+          <p class="text-xs text-base-content/45">Units & equipment</p>
+          <span class="text-[10px] text-base-content/35">// effective = trained + gear</span>
+        </div>
+        <Show
+          when={roster().length > 0}
+          fallback={
+            <p class="text-xs text-base-content/40 py-1">Waiting for the roster snapshot…</p>
+          }
+        >
+          <For each={roster()}>
+            {(u) => (
+              <div class="mb-3 last:mb-0">
+                <div class="flex items-baseline gap-2">
+                  <span class="text-sm">{u.name}</span>
+                  <Show when={u.isPlayer}>
+                    <span class="badge badge-xs badge-soft">player</span>
+                  </Show>
+                </div>
+                <div class="font-mono text-[11px] text-base-content/60 mt-0.5">
+                  <For each={STAT_KEYS}>
+                    {([k, label]) => (
+                      <span class="mr-2">
+                        {label} {u.effective[k]}
+                        <Show when={u.effective[k] !== u.trained[k]}>
+                          <span class="text-success">({u.trained[k]}+{u.effective[k] - u.trained[k]})</span>
+                        </Show>
+                      </span>
+                    )}
+                  </For>
+                </div>
+                <Show
+                  when={u.equipment.length > 0}
+                  fallback={
+                    <p class="text-[11px] text-base-content/40 mt-1">Nothing equipped.</p>
+                  }
+                >
+                  <ul class="mt-1 divide-y divide-base-300/40 text-sm">
+                    <For each={u.equipment}>
+                      {(g) => (
+                        <li class="flex items-center gap-2 py-1">
+                          <span class="font-mono text-[10px] uppercase tracking-wider text-base-content/45 w-16 shrink-0">
+                            {g.slot}
+                          </span>
+                          <span class="truncate min-w-0 flex-1">
+                            {g.name}
+                            <span class="text-[10px] text-base-content/45 font-mono ml-1">
+                              {statsSummary(g.stats)}
+                            </span>
+                          </span>
+                          <button
+                            class="btn btn-xs btn-ghost"
+                            onClick={() => unequip(u.id, g.instanceId)}
+                          >
+                            Unequip
+                          </button>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </Show>
+              </div>
+            )}
+          </For>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+function StackTable(props: {
+  title: string;
+  hint?: string;
+  stacks: ItemStackView[];
+  showCategory?: boolean;
+  empty: string;
+}) {
+  return (
+    <div class="bg-base-200/40 rounded-box p-3">
+      <div class="flex items-baseline gap-2 mb-2">
+        <p class="text-xs text-base-content/45">{props.title}</p>
+        <Show when={props.hint}>
+          <span class="text-[10px] text-base-content/35">// {props.hint}</span>
+        </Show>
+      </div>
+      <Show
+        when={props.stacks.length > 0}
+        fallback={<p class="text-xs text-base-content/40 py-1">{props.empty}</p>}
+      >
+        <table class="table table-xs">
+          <thead>
+            <tr class="text-[10px] uppercase tracking-wider text-base-content/45">
+              <th class="font-normal">item</th>
+              <Show when={props.showCategory}>
+                <th class="font-normal w-16">cat</th>
+              </Show>
+              <th class="font-normal text-right w-16">qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={props.stacks}>
+              {(s) => (
+                <tr>
+                  <td class="truncate">{s.name}</td>
+                  <Show when={props.showCategory}>
+                    <td class="font-mono uppercase text-base-content/55">{s.category ?? "—"}</td>
+                  </Show>
+                  <td class="font-mono text-right">{s.qty}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </Show>
+    </div>
+  );
+}
