@@ -151,16 +151,21 @@ serves **today**:
   subprotocols — `grindshell.auth.<token>` and a per-attempt `<nonce>`. The server echoes the
   nonce as the selected subprotocol; the client **verifies the echo and severs on mismatch**
   (accounts.md anti-hijack). Auto-reconnect with backoff.
-- **Chat** (the only live gameplay surface): send/join/leave/create rooms, DMs, moderation
-  (`ClientData`); receive `chatRoomMsg` / `chatDm` / `chatSystem` / `ack` / `nack`
-  (`ServerMessage`). The context normalizes these into per-room `ChatEntry[]` the ChatPanel
-  renders. Built-in rooms (`global`/`main`/`help`/`trade`) come from chat.md canon.
+- **Chat**: send/join/leave/create rooms, DMs, moderation (`ClientData`); receive
+  `chatRoomMsg` / `chatDm` / `chatSystem` / `ack` / `nack` (`ServerMessage`). The context
+  normalizes these into per-room `ChatEntry[]` the ChatPanel renders. Built-in rooms
+  (`global`/`main`/`help`/`trade`) come from chat.md canon.
+- **Idle actions (combat only)**: the game half of the connect-time state push
+  (`gameState`: zone + in-flight `ActionView`), zone enemy listings (`listEnemies` →
+  `enemyList`, cached per zone in the context), `changeAction` (atomic stop-then-start per
+  actions.md) / `stopAction`, per-tick `actionTick` **deltas** (absent fields unchanged;
+  folded over the `gameState` baseline), and the final `actionRewards`. The context keeps
+  this in `world` (zone, action, enemy cache, reward report, action log); the Actions page
+  and TopBar render it.
 
-**Not present on the wire** (so not modeled here): any game-state sync — inventory, formation,
-actions, combat, ticks, area. The backend accepts non-chat messages but silently drops them
-server-side (the game engine isn't wired to the socket yet). When those land, add their message
-variants to `protocol.ts` and grow the context; until then gameplay pages stay on local
-placeholder data.
+**Not present on the wire** (so not modeled here): inventory, formation, travel/area,
+harvesting/crafting actions, markets. When those land, add their message variants to
+`protocol.ts` and grow the context; until then those pages stay on local placeholder data.
 
 **Auth gate.** [App.tsx](src/App.tsx) shows [LoginRegister](src/pages/LoginRegister.tsx) until
 the client is authenticated; only then does it mount `GameProvider` + the router. "Authed" is

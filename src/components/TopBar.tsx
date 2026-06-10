@@ -1,29 +1,35 @@
-import { createSignal, onCleanup, onMount } from "solid-js";
+import { Show } from "solid-js";
+import { useGame } from "../lib/game-context";
 import { Icon } from "./Icon";
 
-// The current-travel indicator. The animated tick is placeholder telemetry —
-// it stands in for the server-driven travel progress the real client will bind.
+// The current-action indicator: the in-flight idle action's kind and KC
+// progress from the game context (the action itself lives on the Actions
+// screen — this bar keeps it visible everywhere).
 export function TopBar(props: { showChat: boolean; onToggleChat: () => void }) {
-  const [progress, setProgress] = createSignal(34);
-
-  onMount(() => {
-    const t = setInterval(() => setProgress((p) => (p + 1) % 100), 240);
-    onCleanup(() => clearInterval(t));
-  });
+  const game = useGame();
+  const action = () => game.world.action;
 
   return (
     <nav class="navbar w-full bg-base-300 min-h-12 px-4">
       <div class="w-full flex flex-row items-center gap-4">
-        <p class="my-auto font-mono text-sm tracking-tight">TRAVEL</p>
+        <p class="my-auto font-mono text-sm tracking-tight uppercase">
+          {action()?.kind ?? "idle"}
+        </p>
         <div class="w-full my-auto">
           <progress
             class="progress progress-primary w-full h-1.5"
-            max="100"
-            value={progress()}
+            max={action()?.kcTarget ?? 100}
+            value={action()?.kcDone ?? 0}
           />
         </div>
         <span class="font-mono text-xs text-base-content/55 shrink-0">
-          tick {progress().toString().padStart(3, "0")}
+          <Show when={action()} fallback={"no action"}>
+            {(a) => (
+              <>
+                {a().enemyName} · KC {a().kcDone}/{a().kcTarget}
+              </>
+            )}
+          </Show>
         </span>
         <button
           class={
