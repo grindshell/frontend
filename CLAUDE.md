@@ -111,9 +111,9 @@ dist/                 Vite build output (gitignored)
   `/` Overview · `/actions` · `/area` · `/formation` · `/inventory` · `/global-market` ·
   `/profile` · `/rankings` · `/time-tracker` · `/resource-editor` · `/about` · `/settings`.
 - **Page fidelity**: pages backed by live server state render it for real — Actions
-  (idle combat), Inventory (holdings/gear/effects), Formation (the roster; grid
-  placement is an honest "not served yet" note), chat, and self-contained pages (About,
-  theme Settings). Pages whose backing surface the backend doesn't serve yet (area,
+  (idle combat), Inventory (holdings/gear/effects), Formation (the roster, each unit's
+  resolved-skill build inspector, and the live 5x5 grid editor over the `formation`
+  snapshot), chat, and self-contained pages (About, theme Settings). Pages whose backing surface the backend doesn't serve yet (area,
   markets, …) are **themed placeholders** (`PagePlaceholder`) — they are intentionally
   not faked with invented game data. Don't invent server/state shapes; see §6 and §7.
 
@@ -178,7 +178,11 @@ serves **today**:
   Overview Inventory card, and the [Inventory page](src/pages/game/Inventory.tsx).
 
 - **Roster & gear** (INVENTORY_IMPL.md Phase 2): the `roster` push is the authoritative unit
-  snapshot (`UnitView`: trained vs effective stats, trained skills, equipped `GearView`s),
+  snapshot (`UnitView`: trained vs effective stats, trained skills, the **resolved merged
+  skill list** (`resolvedSkills`: each dispatched skill in processing order with display name,
+  description, effective value, and override-conflict flag — the canon-required build inspector,
+  skills.md §"Player visibility"; server-computed via the kernel against the live registry,
+  empty until skill content exists), and equipped `GearView`s),
   replaced wholesale like the inventory; the inventory snapshot carries the **unequipped**
   gear instances. `equipGear`/`unequipGear` ops are instance-id addressed; nothing is applied
   optimistically — the ack rides with fresh inventory + roster snapshots. `GearView.requirements`
@@ -195,7 +199,16 @@ serves **today**:
   buttons on consumables and an **Active effects** panel that counts the timer down locally from
   the server baseline.
 
-**Not present on the wire** (so not modeled here): formation *editing*, zone/world consumable
+- **Formation editing** (formations.md "Editing the formation"): the `formation` push is the
+  authoritative layout snapshot (`FormationSlotView[]`: roster unit id + 5x5 grid cell),
+  replaced wholesale; pushed at connect, on `requestState`, and after a successful edit. The
+  `setFormation` op sends the **whole layout** — validated atomically server-side (in-grid,
+  roster units only, no cell/unit twice; an empty layout is valid but can't start actions) and
+  nacked in full otherwise; nothing is applied optimistically. Edits are allowed mid-action but
+  take effect at the next Preparation (the in-flight action keeps its cached stats). The
+  Formation page's grid editor renders it (right column = the leading side, per canon).
+
+**Not present on the wire** (so not modeled here): zone/world consumable
 scopes, travel/area, harvesting/crafting actions, markets. When those land, add their message
 variants to `protocol.ts` and grow the context; until then those pages stay on local placeholder
 data.
@@ -228,11 +241,12 @@ Config + endpoints: [config.ts](src/lib/config.ts) / `.env.example`.
 - Mirror the pinned versions in §1 when adding the deps the design names. Don't swap pnpm.
 - **No invented game/server contracts.** Wire types in [protocol.ts](src/lib/protocol.ts)
   mirror the backend's real serde definitions: auth, chat, the idle-combat action lifecycle
-  (`gameState`/`actionTick`/`actionRewards`/enemy listings), inventory, roster/gear, and
-  consumables/effects — the backend serves all of these today. Anything the backend doesn't
-  yet serve (travel/area/zones beyond the zone string, markets, formation grid editing,
-  multiplayer/boss combat) is **not** modeled — when a page needs that data, surface the
-  need rather than hardcoding a fake shape. The canonical data model is decided in
+  (`gameState`/`actionTick`/`actionRewards`/enemy listings), inventory, roster/gear (incl. the
+  resolved-skill build inspector on `UnitView`), consumables/effects, and formation editing —
+  the backend serves all of these today. Anything the backend doesn't yet serve (travel/area/
+  zones beyond the zone string, markets, multiplayer/boss combat, per-unit combat-stat
+  *projection* of an idle formation) is **not** modeled — when a page needs that data, surface
+  the need rather than hardcoding a fake shape. The canonical data model is decided in
   `knowledge-base/` and implemented server-side first; grow the data layer to match the
   backend, not ahead of it.
 - Run `pnpm typecheck` before considering a change done. `tsconfig` is strict

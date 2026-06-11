@@ -529,6 +529,7 @@ function FormationCard(props: { span: Span }) {
   const game = useGame();
   const T = () => tier(props.span);
   const units = () => game.world.roster ?? [];
+  const placedCount = () => game.world.formation?.length ?? 0;
 
   return (
     <Switch>
@@ -613,8 +614,8 @@ function FormationCard(props: { span: Span }) {
           </ul>
           <Show when={T() === "large"}>
             <div class="mt-3 pt-3 border-t border-base-300/60 text-[11px] text-base-content/45">
-              Formation grid placement isn't served by the backend yet — units fight as a
-              pooled formation.
+              {placedCount()} of {units().length} placed on the grid — arrange them on the
+              Formation page.
             </div>
           </Show>
         </div>

@@ -5,8 +5,9 @@
 // the `gameState` slice of the connect-time push, zone enemy listings,
 // change/stop action, per-tick `actionTick` deltas, and the final
 // `actionRewards`; plus the INVENTORY/roster/effects snapshots (holdings,
-// units + gear, formation-scoped Zone Effects) and their equip/use ops.
-// Surfaces the backend doesn't serve (formation grid editing, travel/area,
+// units + gear, formation-scoped Zone Effects) and their equip/use ops, and
+// the FORMATION layout (the `formation` snapshot + whole-layout
+// `setFormation` edits). Surfaces the backend doesn't serve (travel/area,
 // markets) stay unmodeled — those pages keep placeholders until the wire
 // grows them.
 //
@@ -32,6 +33,7 @@ import type {
   CurrenciesView,
   EffectView,
   EnemyInfo,
+  FormationSlotView,
   GearView,
   GeneralResourcesView,
   ItemStackView,
@@ -134,6 +136,11 @@ type WorldState = {
   inventory: InventoryState | null;
   /** Owned units (the `roster` push); null until the first server push. */
   roster: UnitView[] | null;
+  /** The formation layout (the `formation` push): every occupied cell of the
+   * 5x5 grid, authoritative and replaced wholesale; null until the first
+   * server push. An in-flight action keeps its cached Preparation-walk stats,
+   * so mid-action this can legitimately disagree with `action`. */
+  formation: FormationSlotView[] | null;
   /** Active formation-scoped Zone Effects (the `effects` push); authoritative,
    * replaced wholesale. Empty until the first push. */
   effects: EffectView[];
@@ -174,6 +181,11 @@ export type Game = {
    * the server acks with fresh inventory + effects snapshots or nacks
    * (`onError`). */
   useConsumable: (item: string, onError?: (reason?: string) => void) => void;
+  /** Replace the formation layout as a whole (formations.md "Editing the
+   * formation"); the server validates atomically and acks with the fresh
+   * `formation` snapshot or nacks with the reason (`onError`). Nothing is
+   * applied optimistically. */
+  setFormation: (slots: FormationSlotView[], onError?: (reason?: string) => void) => void;
   /** Dismiss the reward view. */
   clearRewards: () => void;
   /** Append a local (client-only) line to the action log. */
@@ -195,6 +207,7 @@ export function GameProvider(props: ParentProps) {
     enemies: {},
     inventory: null,
     roster: null,
+    formation: null,
     effects: [],
     lastRewards: null,
     lastCombat: null,
@@ -297,6 +310,10 @@ export function GameProvider(props: ParentProps) {
       case "roster":
         // Authoritative snapshot: replace.
         setWorld("roster", msg.units);
+        break;
+      case "formation":
+        // Authoritative snapshot: replace the layout.
+        setWorld("formation", msg.slots);
         break;
       case "effects":
         // Authoritative snapshot: replace the active-effect set.
@@ -468,7 +485,7 @@ export function GameProvider(props: ParentProps) {
   /** Ask the server for a full state refresh (top-level control message,
    * rate-limited per connection). The server fans it to both subsystems: chat
    * re-pushes `chatState`, the game re-pushes `gameState` + `inventory` +
-   * `roster` + `effects`. */
+   * `roster` + `formation` + `effects`. */
   const resync = () => {
     if (online()) send({ t: "requestState" });
   };
@@ -538,6 +555,16 @@ export function GameProvider(props: ParentProps) {
     // Formation scope is the only one the server implements today; the ack
     // rides with fresh inventory + effects snapshots (nothing optimistic).
     send({ t: "game", gt: "useConsumable", item, target: "formation" }, { onNack: onError });
+  };
+
+  const setFormation = (slots: FormationSlotView[], onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — formation editing needs a server connection");
+      return;
+    }
+    // The whole layout, validated atomically server-side; the ack rides with
+    // the fresh formation snapshot (nothing optimistic).
+    send({ t: "game", gt: "setFormation", slots }, { onNack: onError });
   };
 
   const clearRewards = () => setWorld("lastRewards", null);
@@ -624,6 +651,7 @@ export function GameProvider(props: ParentProps) {
     unequipGear,
     requestGearPage,
     useConsumable,
+    setFormation,
     clearRewards,
     logLocal,
   };

@@ -12,8 +12,11 @@
 // the game's share of `requestState`) to the game engine. Live gameplay
 // surfaces today: auth, chat, the idle-combat action lifecycle (enemy
 // listings, change/stop action, per-tick deltas, rewards), inventory/gear
-// (holdings snapshots, gear paging, equip/unequip), the unit roster, and
-// consumables + formation-scoped zone effects. The exact message
+// (holdings snapshots, gear paging, equip/unequip), the unit roster (including
+// each unit's resolved merged skill list for the build inspector, skills.md
+// §"Player visibility"), consumables + formation-scoped zone effects, and
+// formation editing (the layout snapshot + the whole-layout `setFormation`
+// op). The exact message
 // envelope is owned by the backend/client and is not frozen in canon —
 // accounts.md fixes the *behavior* of the connect-time state push, not its
 // wire shape — so this mirrors the backend's current implementation and moves
@@ -79,7 +82,17 @@ export type GameData =
   // Zone Effect at `target` scope. The server implements `formation`; `zone`
   // and `world` nack as not-yet-available. Nacks when the item is absent or
   // not a consumable.
-  | { gt: "useConsumable"; item: string; target: "formation" | "zone" | "world" };
+  | { gt: "useConsumable"; item: string; target: "formation" | "zone" | "world" }
+  // Replace the formation layout as a whole (formations.md "Editing the
+  // formation"): `slots` is the complete new set of occupied cells — the same
+  // shape the `formation` snapshot carries. Validated atomically server-side
+  // (in-grid cells, roster units only, no cell or unit twice) and nacked in
+  // full on any violation, leaving the previous layout standing. An empty
+  // layout is valid (it just can't start actions). Always allowed, including
+  // mid-action: the in-flight action keeps its cached Preparation-walk stats
+  // and the new layout takes effect at the next Preparation. The ack rides
+  // with the fresh `formation` snapshot.
+  | { gt: "setFormation"; slots: FormationSlotView[] };
 
 // Top-level inbound data, tagged on `t`. Chat ops are carried under `t: "chat"`
 // and game ops under `t: "game"`. `requestState` is a top-level *control*
@@ -175,6 +188,27 @@ export type SkillGrantView = {
   value: number;
 };
 
+/** One entry of a unit's resolved merged skill list (`ResolvedSkillView`,
+ * skills.md "The merged skill list" / §"Player visibility"): a skill the unit
+ * actually dispatches, presented IN PROCESSING ORDER (the `resolvedSkills`
+ * array is ordered, highest effective priority first). Canon requires the
+ * client surface this per unit, in order, with override conflicts called out. */
+export type ResolvedSkillView = {
+  /** Stable skill id / registry key. */
+  id: string;
+  /** Player-facing display name (falls back to the id when unregistered). */
+  name: string;
+  /** Player-facing description of what the skill does ("" / absent until authored). */
+  description?: string;
+  /** Effective value (trained + gear grants); always > 0 (the dispatch gate). */
+  value: number;
+  /** No registry entry — still dispatches, but last in order. */
+  unregistered: boolean;
+  /** Disagreeing priority overrides forced a fallback to the registry default
+   * (skills.md "Override conflicts") — canon requires this be surfaced. */
+  conflict: boolean;
+};
+
 /** One owned gear instance (`GearView`, items.md "Gear instances and
  * templates"), display fields resolved server-side. `requirements` are
  * per-stat minimums vs a unit's TRAINED levels (0 = none) — sent so the
@@ -194,7 +228,8 @@ export type GearView = {
 };
 
 /** One roster unit (`UnitView`, units.md): identity, trained vs effective
- * (trained + gear) stats, trained skills, and equipped gear. */
+ * (trained + gear) stats, trained skills, the resolved merged skill list, and
+ * equipped gear. */
 export type UnitView = {
   id: string;
   name: string;
@@ -203,7 +238,23 @@ export type UnitView = {
   trained: UnitStatsView;
   effective: UnitStatsView;
   skills: SkillGrantView[];
+  /** The resolved merged skill list, in processing order (skills.md
+   * §"Player visibility"). Absent/empty for a unit with no non-zero skills. */
+  resolvedSkills?: ResolvedSkillView[];
   equipment: GearView[];
+};
+
+/** One occupied formation cell (`FormationSlotView`, formations.md "Layout"):
+ * a roster unit id at its grid position, both coordinates in 0..5. Shared by
+ * the `formation` snapshot and the `setFormation` op. The grid's processing
+ * order is top-to-bottom, right-to-left — cell 1 is (4, 0) — and the
+ * right-most column is the visually leading side (formations.md "Visual
+ * presentation"). */
+export type FormationSlotView = {
+  /** The roster-unique unit id (`UnitView.id`). */
+  unit: string;
+  x: number;
+  y: number;
 };
 
 /** One active formation-scoped Zone Effect (`EffectView`, zone-effects.md
@@ -336,7 +387,14 @@ export type ServerMessage =
   // The authoritative active-effects snapshot (zone-effects.md): the player's
   // active formation-scoped Zone Effects. Pushed at connect, on `requestState`,
   // after a consumable is used, and when an effect expires. Client REPLACES.
-  | { t: "effects"; effects: EffectView[] };
+  | { t: "effects"; effects: EffectView[] }
+  // The authoritative formation snapshot (formations.md "Editing the
+  // formation"): the single active layout — every occupied cell. Pushed at
+  // connect, on `requestState`, and after a successful `setFormation`. The
+  // client REPLACES its layout from this. An edit never touches an in-flight
+  // action's cached stats, so this and the action view can legitimately
+  // disagree mid-action.
+  | { t: "formation"; slots: FormationSlotView[] };
 
 /**
  * Parse a raw WebSocket text frame into typed `ServerMessage`s.
