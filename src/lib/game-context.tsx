@@ -31,6 +31,8 @@ import type {
   ClientData,
   CombatView,
   CurrenciesView,
+  DestinationInfo,
+  Direction,
   EffectView,
   EnemyInfo,
   FormationSlotView,
@@ -92,7 +94,7 @@ export type RewardReport = {
 
 /** What an action is acting on, by display name (its kind's slice owns it). */
 export const actionTarget = (action: ActionView): string =>
-  action.combat?.enemyName ?? action.kind;
+  action.combat?.enemyName ?? action.travel?.destinationName ?? action.kind;
 
 /** The committed holdings (the `inventory` push): authoritative server
  * snapshot, replaced wholesale — never accumulated client-side. */
@@ -132,6 +134,9 @@ type WorldState = {
   /** Zone ("x,y,z") → its knowledge-filtered enemy roster, cached per server
    * push (the server expects the client to cache these). */
   enemies: Record<string, EnemyInfo[]>;
+  /** Zone ("x,y,z") → its legal travel destinations (adjacent authored
+   * zones), cached per server push like the enemy roster. */
+  destinations: Record<string, DestinationInfo[]>;
   /** Committed holdings; null until the first server push (offline mode). */
   inventory: InventoryState | null;
   /** Owned units (the `roster` push); null until the first server push. */
@@ -147,6 +152,8 @@ type WorldState = {
   lastRewards: RewardReport | null;
   /** The last combat request, for quick restart. */
   lastCombat: { enemy: string; kc: number } | null;
+  /** The last travel request (the chosen direction), for quick restart. */
+  lastTravel: { direction: Direction } | null;
   log: ActionLogEntry[];
 };
 
@@ -164,8 +171,14 @@ export type Game = {
   world: WorldState;
   /** Request the current zone's selectable enemies (answered by `enemyList`). */
   listEnemies: () => void;
+  /** Request the current zone's travel destinations (answered by
+   * `destinationList`). */
+  listDestinations: () => void;
   /** Start (or replace — atomic stop-then-start) an idle-combat action. */
   startCombat: (enemyId: string, kc: number) => void;
+  /** Start (or replace — atomic stop-then-start) a travel action toward the
+   * adjacent zone in `direction`. */
+  startTravel: (direction: Direction) => void;
   /** Manually stop the in-flight idle action, committing accrued rewards. */
   stopAction: () => void;
   /** Equip an unequipped gear instance onto a roster unit; the server acks
@@ -205,12 +218,14 @@ export function GameProvider(props: ParentProps) {
     zone: "0,0,0",
     action: null,
     enemies: {},
+    destinations: {},
     inventory: null,
     roster: null,
     formation: null,
     effects: [],
     lastRewards: null,
     lastCombat: null,
+    lastTravel: null,
     log: [],
   });
 
@@ -284,16 +299,24 @@ export function GameProvider(props: ParentProps) {
         if (msg.action) {
           // A fresh start also pushes this baseline; only call it a resume
           // when the action already has progress.
-          pushLog(
-            `${msg.action.kcDone > 0 ? "Resumed" : "Started"}: ${msg.action.kind} vs ` +
-              `${actionTarget(msg.action)} (KC ${msg.action.kcDone}/${msg.action.kcTarget}).`,
-            "info",
-          );
+          const verb = msg.action.kcDone > 0 ? "Resumed" : "Started";
+          if (msg.action.kind === "travel") {
+            pushLog(`${verb}: travel to ${actionTarget(msg.action)}.`, "info");
+          } else {
+            pushLog(
+              `${verb}: ${msg.action.kind} vs ${actionTarget(msg.action)} ` +
+                `(KC ${msg.action.kcDone}/${msg.action.kcTarget}).`,
+              "info",
+            );
+          }
         }
         break;
       }
       case "enemyList":
         setWorld("enemies", msg.zone, msg.enemies);
+        break;
+      case "destinationList":
+        setWorld("destinations", msg.from, msg.destinations);
         break;
       case "inventory":
         // Authoritative snapshot: replace, never merge or accumulate.
@@ -324,6 +347,9 @@ export function GameProvider(props: ParentProps) {
         if (act) {
           // Fold the delta over the baseline; absent fields are unchanged.
           const patch: Partial<ActionView> = { phase: msg.phase };
+          // Travel learns its engine-computed KC at Preparation; combat's was
+          // already known but re-sending is harmless.
+          if (msg.kcTarget != null) patch.kcTarget = msg.kcTarget;
           if (msg.kcDone != null) patch.kcDone = msg.kcDone;
           if (msg.formationHp != null) patch.formationHp = msg.formationHp;
           if (msg.formationMaxHp != null) patch.formationMaxHp = msg.formationMaxHp;
@@ -340,35 +366,52 @@ export function GameProvider(props: ParentProps) {
             if (Object.keys(combat).length > 0) setWorld("action", "combat", combat);
           }
         }
-        // Narrate the tick into the action log.
-        const name = act?.combat?.enemyName ?? "the enemy";
-        switch (msg.phase) {
-          case "preparation":
-            pushLog(`Preparation complete — engaging ${name}.`, "info");
-            break;
-          case "execution":
-            for (const a of msg.attacks ?? []) {
-              if (a.actor === "formation") {
-                pushLog(`You hit ${name} for ${a.damage}.${a.defeated ? " It falls!" : ""}`, "combat");
-              } else {
-                pushLog(
-                  `${name} hits you for ${a.damage}.${a.defeated ? " Your formation is wiped!" : ""}`,
-                  a.defeated ? "failure" : "combat",
-                );
+        // Narrate the tick into the action log — travel and combat read very
+        // differently, so branch on the kind.
+        if (act?.kind === "travel") {
+          const dest = act.travel?.destinationName ?? "the next zone";
+          switch (msg.phase) {
+            case "preparation":
+              pushLog(`Course plotted to ${dest} — ${act.kcTarget} ticks out.`, "info");
+              break;
+            case "execution":
+              if (msg.kcDone != null) {
+                pushLog(`En route to ${dest}… (${msg.kcDone}/${act.kcTarget})`, "info");
               }
-            }
-            if (msg.kcDone != null && act) {
-              pushLog(`Kill ${msg.kcDone}/${act.kcTarget}.`, "info");
-            }
-            break;
-          case "downtime":
-            pushLog("Downtime — the formation reels. (burns 1 KC)", "failure");
-            break;
-          case "regroup":
-            pushLog("Regroup — formation health restored; resuming. (burns 1 KC)", "info");
-            break;
-          case "resolution":
-            break;
+              break;
+            default:
+              break;
+          }
+        } else {
+          const name = act?.combat?.enemyName ?? "the enemy";
+          switch (msg.phase) {
+            case "preparation":
+              pushLog(`Preparation complete — engaging ${name}.`, "info");
+              break;
+            case "execution":
+              for (const a of msg.attacks ?? []) {
+                if (a.actor === "formation") {
+                  pushLog(`You hit ${name} for ${a.damage}.${a.defeated ? " It falls!" : ""}`, "combat");
+                } else {
+                  pushLog(
+                    `${name} hits you for ${a.damage}.${a.defeated ? " Your formation is wiped!" : ""}`,
+                    a.defeated ? "failure" : "combat",
+                  );
+                }
+              }
+              if (msg.kcDone != null && act) {
+                pushLog(`Kill ${msg.kcDone}/${act.kcTarget}.`, "info");
+              }
+              break;
+            case "downtime":
+              pushLog("Downtime — the formation reels. (burns 1 KC)", "failure");
+              break;
+            case "regroup":
+              pushLog("Regroup — formation health restored; resuming. (burns 1 KC)", "info");
+              break;
+            case "resolution":
+              break;
+          }
         }
         break;
       }
@@ -382,11 +425,22 @@ export function GameProvider(props: ParentProps) {
           stopped: msg.stopped,
           rewards: msg.rewards,
         });
-        pushLog(
-          `${msg.stopped ? "Stopped" : "Finished"} ${msg.kind} vs ${msg.targetName}: ` +
-            `${summarizeRewards(msg.rewards)}.`,
-          "reward",
-        );
+        if (msg.kind === "travel") {
+          // Travel has no tally — its only outcome is arrival (or, when
+          // stopped, no movement at all).
+          pushLog(
+            msg.stopped
+              ? `Abandoned the journey to ${msg.targetName}.`
+              : `Arrived at ${msg.targetName}.`,
+            "reward",
+          );
+        } else {
+          pushLog(
+            `${msg.stopped ? "Stopped" : "Finished"} ${msg.kind} vs ${msg.targetName}: ` +
+              `${summarizeRewards(msg.rewards)}.`,
+            "reward",
+          );
+        }
         break;
       }
       case "nack": {
@@ -499,6 +553,11 @@ export function GameProvider(props: ParentProps) {
     send({ t: "game", gt: "listEnemies" });
   };
 
+  const listDestinations = () => {
+    if (!online()) return;
+    send({ t: "game", gt: "listDestinations" });
+  };
+
   const startCombat = (enemyId: string, kc: number) => {
     if (!online()) {
       pushLog("Offline — actions need a server connection.", "local");
@@ -511,6 +570,22 @@ export function GameProvider(props: ParentProps) {
     send(
       { t: "game", gt: "changeAction", kind: "combat", enemy: enemyId, kc },
       { onNack: (reason) => pushLog(`✗ ${reason ?? "could not start the action"}`, "failure") },
+    );
+  };
+
+  const startTravel = (direction: Direction) => {
+    if (!online()) {
+      pushLog("Offline — actions need a server connection.", "local");
+      return;
+    }
+    setWorld("lastTravel", { direction });
+    setWorld("lastRewards", null);
+    // Like combat, the server acks and pushes the fresh gameState baseline (and
+    // any stopped rewards if an action was already in flight). The journey is
+    // priced server-side at the next Preparation tick.
+    send(
+      { t: "game", gt: "changeAction", kind: "travel", direction },
+      { onNack: (reason) => pushLog(`✗ ${reason ?? "could not start traveling"}`, "failure") },
     );
   };
 
@@ -645,7 +720,9 @@ export function GameProvider(props: ParentProps) {
     dmBucket: DM_BUCKET,
     world,
     listEnemies,
+    listDestinations,
     startCombat,
+    startTravel,
     stopAction,
     equipGear,
     unequipGear,

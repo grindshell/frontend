@@ -1,13 +1,19 @@
-import { For, Index, Match, Show, Switch, createEffect, createSignal, type ParentProps } from "solid-js";
+import { For, Index, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 import { useGame } from "../../lib/game-context";
 import type { FormationSlotView, UnitView } from "../../lib/protocol";
 
-// The formation screen: live units from the server's authoritative `roster`
-// push (units.md) and the grid editor over the authoritative `formation`
-// snapshot (formations.md "Editing the formation"). Edits are local until
-// Save sends the whole layout as one `setFormation` op — the server validates
+// The formation screen: a tabbed layout mirroring the Actions screen — a
+// signal-driven tab strip over a single scroll region (no nested scrollbars).
+// "Units" lists the roster (live from the authoritative `roster` push,
+// units.md) and drills into a unit's stats / resolved-skill inspector;
+// "Formation" is the grid editor over the authoritative `formation` snapshot
+// (formations.md "Editing the formation"). Editor edits are local until Save
+// sends the whole layout as one `setFormation` op — the server validates
 // atomically and either acks with the fresh snapshot or nacks in full.
 // Equip/unequip lives on the Inventory page.
+
+const TABS = ["Units", "Formation"] as const;
+type Tab = (typeof TABS)[number];
 
 const STAT_KEYS = [
   ["str", "STR"],
@@ -23,6 +29,7 @@ type UnitViewMode = "table" | "detail";
 export function Formation() {
   const game = useGame();
   const roster = () => game.world.roster ?? [];
+  const [tab, setTab] = createSignal<Tab>("Units");
   const [unitView, setUnitView] = createSignal<UnitViewMode>("table");
   const [unitDetailId, setUnitDetailId] = createSignal("");
 
@@ -33,69 +40,85 @@ export function Formation() {
         <span class="text-xs text-base-content/45">// your roster — live from the server</span>
       </header>
 
-      <div class="tabs tabs-box">
-        <input type="radio" name="formation_tabs" class="tab" aria-label="Units" checked />
-        <TabContent>
-          <Show
-            when={roster().length > 0}
-            fallback={
-              <p class="text-sm text-base-content/50 p-4 text-center">
-                Waiting for the roster snapshot…
-              </p>
-            }
-          >
-            <Switch>
-              <Match when={unitView() === "table"}>
-                <table class="table">
-                  <thead class="text-base-content/60">
-                    <tr>
-                      <th>Name</th>
-                      <th>Title</th>
-                      <th>Skills</th>
-                      <th>Gear</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={roster()}>
-                      {(u) => (
-                        <tr
-                          class="hover:bg-base-300 cursor-pointer"
-                          onClick={() => {
-                            setUnitDetailId(u.id);
-                            setUnitView("detail");
-                          }}
-                        >
-                          <td>
-                            {u.name}
-                            <Show when={u.isPlayer}>
-                              <span class="badge badge-xs badge-soft ml-2">player</span>
-                            </Show>
-                          </td>
-                          <td class="text-base-content/70">{u.title ?? "—"}</td>
-                          <td class="text-base-content/70">
-                            {(u.resolvedSkills?.length ?? u.skills.length) || "—"}
-                          </td>
-                          <td class="text-base-content/70">{u.equipment.length || "—"}</td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
-              </Match>
-              <Match when={unitView() === "detail"}>
-                <UnitDetail
-                  unit={roster().find((u) => u.id === unitDetailId())}
-                  onBack={() => setUnitView("table")}
-                />
-              </Match>
-            </Switch>
-          </Show>
-        </TabContent>
+      <div class="grow flex flex-col overflow-hidden">
+        <div role="tablist" class="tabs tabs-box w-fit mb-3">
+          <For each={TABS}>
+            {(t) => (
+              <button
+                role="tab"
+                class="tab"
+                classList={{ "tab-active": tab() === t }}
+                onClick={() => setTab(t)}
+              >
+                {t}
+              </button>
+            )}
+          </For>
+        </div>
 
-        <input type="radio" name="formation_tabs" class="tab" aria-label="Formation" />
-        <TabContent>
-          <FormationEditor />
-        </TabContent>
+        <div class="grow overflow-y-auto border border-base-300 rounded p-4">
+          <Switch>
+            <Match when={tab() === "Units"}>
+              <Show
+                when={roster().length > 0}
+                fallback={
+                  <p class="text-sm text-base-content/50 p-4 text-center">
+                    Waiting for the roster snapshot…
+                  </p>
+                }
+              >
+                <Switch>
+                  <Match when={unitView() === "table"}>
+                    <table class="table">
+                      <thead class="text-base-content/60">
+                        <tr>
+                          <th>Name</th>
+                          <th>Title</th>
+                          <th>Skills</th>
+                          <th>Gear</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <For each={roster()}>
+                          {(u) => (
+                            <tr
+                              class="hover:bg-base-300 cursor-pointer"
+                              onClick={() => {
+                                setUnitDetailId(u.id);
+                                setUnitView("detail");
+                              }}
+                            >
+                              <td>
+                                {u.name}
+                                <Show when={u.isPlayer}>
+                                  <span class="badge badge-xs badge-soft ml-2">player</span>
+                                </Show>
+                              </td>
+                              <td class="text-base-content/70">{u.title ?? "—"}</td>
+                              <td class="text-base-content/70">
+                                {(u.resolvedSkills?.length ?? u.skills.length) || "—"}
+                              </td>
+                              <td class="text-base-content/70">{u.equipment.length || "—"}</td>
+                            </tr>
+                          )}
+                        </For>
+                      </tbody>
+                    </table>
+                  </Match>
+                  <Match when={unitView() === "detail"}>
+                    <UnitDetail
+                      unit={roster().find((u) => u.id === unitDetailId())}
+                      onBack={() => setUnitView("table")}
+                    />
+                  </Match>
+                </Switch>
+              </Show>
+            </Match>
+            <Match when={tab() === "Formation"}>
+              <FormationEditor />
+            </Match>
+          </Switch>
+        </div>
       </div>
     </section>
   );
@@ -118,12 +141,14 @@ const sizeMultiplier = (n: number): number => {
  * cell 1 is (4, 0), cell 25 is (0, 4) (formations.md "Layout"). */
 const cellNumber = (x: number, y: number): number => (GRID - 1 - x) * GRID + y + 1;
 
-/** The grid editor (formations.md "Editing the formation"): click a unit (in
- * the grid or on the bench), then a cell to place/move it — clicking an
- * occupied cell swaps/displaces. Edits stay local until Save sends the whole
- * layout; the server's snapshot (which the ack rides with) re-baselines the
- * view. The right-most column is the leading side (formations.md "Visual
- * presentation"). */
+/** The grid editor (formations.md "Editing the formation"): drag a unit (from a
+ * cell or the bench) onto a cell to move it; dropping on an occupied cell swaps
+ * the two (or displaces the occupant to the bench when dragging from the
+ * bench); drag a placed unit back onto the bench to remove it. Click-to-place
+ * (click a unit, then a cell) stays as the tap/keyboard path. Edits stay local
+ * until Save sends the whole layout; the server's snapshot (which the ack rides
+ * with) re-baselines the view. The right-most column is the leading side
+ * (formations.md "Visual presentation"). */
 function FormationEditor() {
   const game = useGame();
   const roster = () => game.world.roster ?? [];
@@ -134,6 +159,14 @@ function FormationEditor() {
   const [selected, setSelected] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+
+  // Drag-and-drop state (native HTML5 DnD, the same pattern the Overview cards
+  // use): the unit being dragged, where it came from, the hovered cell index,
+  // and whether the bench is the hovered drop target (for removal).
+  const [dragUnit, setDragUnit] = createSignal<string | null>(null);
+  const [dragFrom, setDragFrom] = createSignal<"grid" | "bench" | null>(null);
+  const [dropCell, setDropCell] = createSignal<number | null>(null);
+  const [benchHot, setBenchHot] = createSignal(false);
 
   const slots = () => draft() ?? server() ?? [];
   const dirty = () => draft() !== null;
@@ -156,6 +189,22 @@ function FormationEditor() {
     setDraft(fn(slots().map((s) => ({ ...s }))));
   };
 
+  // Move a unit onto cell (x, y): an empty target moves it there; an occupied
+  // target swaps when the dragged unit came from the grid (the occupant takes
+  // the source cell) or displaces the occupant to the bench when it came from
+  // the bench (no source cell). The single edit path for both click and drag.
+  const moveUnitTo = (unit: string, x: number, y: number) => {
+    const occ = occupant(x, y);
+    if (occ?.unit === unit) return; // dropped on its own cell — no-op
+    const from = placed(unit);
+    edit((cur) => {
+      const rest = cur.filter((s) => s.unit !== unit && s.unit !== occ?.unit);
+      const next = [...rest, { unit, x, y }];
+      if (occ && from) next.push({ unit: occ.unit, x: from.x, y: from.y });
+      return next;
+    });
+  };
+
   const clickCell = (x: number, y: number) => {
     const sel = selected();
     const occ = occupant(x, y);
@@ -167,23 +216,61 @@ function FormationEditor() {
       setSelected(null);
       return;
     }
-    const from = placed(sel);
-    edit((cur) => {
-      const rest = cur.filter((s) => s.unit !== sel && s.unit !== occ?.unit);
-      const next = [...rest, { unit: sel, x, y }];
-      // A displaced occupant swaps into the selected unit's old cell when it
-      // has one; a bench placement displaces the occupant to the bench.
-      if (occ && from) next.push({ unit: occ.unit, x: from.x, y: from.y });
-      return next;
-    });
+    moveUnitTo(sel, x, y);
     setSelected(null);
   };
+
+  const removeUnit = (unit: string) => edit((cur) => cur.filter((s) => s.unit !== unit));
 
   const removeSelected = () => {
     const sel = selected();
     if (!sel || !placed(sel)) return;
-    edit((cur) => cur.filter((s) => s.unit !== sel));
+    removeUnit(sel);
     setSelected(null);
+  };
+
+  // ---- drag-and-drop ----
+  const startDrag = (unit: string, from: "grid" | "bench", e: DragEvent) => {
+    setSelected(null); // a drag supersedes any pending click-selection
+    setDragUnit(unit);
+    setDragFrom(from);
+    e.dataTransfer!.effectAllowed = "move";
+    e.dataTransfer!.setData("text/plain", unit);
+  };
+
+  const endDrag = () => {
+    setDragUnit(null);
+    setDragFrom(null);
+    setDropCell(null);
+    setBenchHot(false);
+  };
+
+  const overCell = (i: number, e: DragEvent) => {
+    if (!dragUnit()) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = "move";
+    if (dropCell() !== i) setDropCell(i);
+  };
+
+  const dropOnCell = (x: number, y: number, e: DragEvent) => {
+    e.preventDefault();
+    const unit = dragUnit() ?? e.dataTransfer?.getData("text/plain") ?? "";
+    if (unit) moveUnitTo(unit, x, y);
+    endDrag();
+  };
+
+  const overBench = (e: DragEvent) => {
+    if (!dragUnit() || dragFrom() !== "grid") return; // only placed units bench
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = "move";
+    setBenchHot(true);
+  };
+
+  const dropOnBench = (e: DragEvent) => {
+    e.preventDefault();
+    const unit = dragUnit();
+    if (unit && dragFrom() === "grid") removeUnit(unit);
+    endDrag();
   };
 
   const save = () => {
@@ -234,15 +321,31 @@ function FormationEditor() {
               const y = Math.floor(i / GRID);
               const occ = () => occupant(x, y);
               const isSelected = () => !!occ() && occ()!.unit === selected();
+              const isDragSource = () => !!occ() && occ()!.unit === dragUnit();
+              const isDropHot = () => dropCell() === i && occ()?.unit !== dragUnit();
               return (
                 <button
                   class="aspect-square rounded-sm border text-center relative flex flex-col items-center justify-center p-1 transition-colors"
                   classList={{
                     "bg-base-300 border-base-content/20": !!occ() && !isSelected(),
                     "bg-primary/20 border-primary ring-1 ring-primary": isSelected(),
-                    "bg-base-200/40 border-base-300 hover:bg-base-300/50": !occ(),
-                    "cursor-pointer": !!occ() || selected() !== null,
+                    "bg-base-200/40 border-base-300": !occ(),
+                    "hover:bg-base-300/50": !occ() && !dragUnit(),
+                    "ring-2 ring-accent": isDropHot(),
+                    "opacity-40": isDragSource(),
+                    "cursor-grab": !!occ(),
+                    "cursor-pointer": !occ() && selected() !== null,
                   }}
+                  draggable={!!occ()}
+                  onDragStart={(e) => {
+                    if (occ()) startDrag(occ()!.unit, "grid", e);
+                  }}
+                  onDragOver={(e) => overCell(i, e)}
+                  onDragLeave={() => {
+                    if (dropCell() === i) setDropCell(null);
+                  }}
+                  onDrop={(e) => dropOnCell(x, y, e)}
+                  onDragEnd={endDrag}
                   onClick={() => clickCell(x, y)}
                 >
                   <span class="absolute top-0.5 right-1 text-[9px] font-mono text-base-content/30">
@@ -250,7 +353,7 @@ function FormationEditor() {
                   </span>
                   <Show when={occ()}>
                     {(s) => (
-                      <span class="text-xs leading-tight break-all line-clamp-2">
+                      <span class="text-xs leading-tight break-all line-clamp-2 pointer-events-none">
                         {unitName(s().unit)}
                       </span>
                     )}
@@ -275,6 +378,7 @@ function FormationEditor() {
             class="btn btn-xs btn-ghost"
             disabled={!selected() || !placed(selected()!)}
             onClick={removeSelected}
+            title="Remove the selected unit (or drag it onto the bench)"
           >
             Remove from grid
           </button>
@@ -290,9 +394,23 @@ function FormationEditor() {
           <div class="alert alert-soft alert-error text-xs py-2">✗ {error()}</div>
         </Show>
 
-        <div>
+        <div
+          class="rounded p-1.5 -m-1.5 border border-dashed border-transparent transition-colors"
+          classList={{
+            "border-accent bg-accent/5": benchHot(),
+            "border-base-300": !benchHot() && !!dragUnit() && dragFrom() === "grid",
+          }}
+          onDragOver={overBench}
+          onDragLeave={() => setBenchHot(false)}
+          onDrop={dropOnBench}
+        >
           <p class="text-xs text-base-content/45 mb-1">
-            Bench <span class="text-base-content/35">// click a unit, then a cell to place it</span>
+            Bench{" "}
+            <span class="text-base-content/35">
+              {dragUnit() && dragFrom() === "grid"
+                ? "// drop here to remove from the grid"
+                : "// drag onto a cell — or click a unit, then a cell"}
+            </span>
           </p>
           <Show
             when={bench().length > 0}
@@ -302,8 +420,15 @@ function FormationEditor() {
               <For each={bench()}>
                 {(u) => (
                   <button
-                    class="btn btn-xs"
-                    classList={{ "btn-primary": selected() === u.id, "btn-soft": selected() !== u.id }}
+                    class="btn btn-xs cursor-grab"
+                    classList={{
+                      "btn-primary": selected() === u.id,
+                      "btn-soft": selected() !== u.id,
+                      "opacity-40": dragUnit() === u.id,
+                    }}
+                    draggable={true}
+                    onDragStart={(e) => startDrag(u.id, "bench", e)}
+                    onDragEnd={endDrag}
                     onClick={() => setSelected(selected() === u.id ? null : u.id)}
                   >
                     {u.name}
@@ -324,12 +449,6 @@ function FormationEditor() {
         </p>
       </div>
     </Show>
-  );
-}
-
-function TabContent(props: ParentProps) {
-  return (
-    <div class="tab-content bg-base-100 border-base-300 p-6 overflow-auto">{props.children}</div>
   );
 }
 

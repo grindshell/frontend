@@ -8,16 +8,24 @@ import {
   createSignal,
 } from "solid-js";
 import { useGame } from "../../lib/game-context";
-import type { ActionStatsView, ActionView, RewardsView } from "../../lib/protocol";
+import type {
+  ActionStatsView,
+  ActionView,
+  Direction,
+  RewardsView,
+} from "../../lib/protocol";
 
 // The idle-action screen: a tabbed per-action details column on the left and
 // the collapsible action log (also the future MUD-interaction surface) on the
-// right. Combat is the only live action — the other tabs are placeholders
-// until their server-side action models land (see frontend CLAUDE.md §6).
+// right. Combat and Travel are live — Harvest/Craft remain placeholders until
+// their server-side action models land (see frontend CLAUDE.md §6).
 // The tab set mirrors canon's action kinds (actions.md: combat, harvesting,
 // crafting, travel — housing construction is a crafting action, not a kind).
 const TABS = ["Combat", "Travel", "Harvest", "Craft"] as const;
 type Tab = (typeof TABS)[number];
+
+/** The tabs whose action models the backend actually serves today. */
+const LIVE_TABS: readonly Tab[] = ["Combat", "Travel"];
 
 /** Tab label → the wire `kind` id the backend uses for it. */
 const KIND_BY_TAB: Record<Tab, string> = {
@@ -55,8 +63,8 @@ export function Actions() {
                   role="tab"
                   class="tab"
                   classList={{ "tab-active": tab() === t }}
-                  disabled={t !== "Combat"}
-                  title={t === "Combat" ? undefined : "coming soon"}
+                  disabled={!LIVE_TABS.includes(t)}
+                  title={LIVE_TABS.includes(t) ? undefined : "coming soon"}
                   onClick={() => setTab(t)}
                 >
                   {t}
@@ -72,6 +80,9 @@ export function Actions() {
             <Switch>
               <Match when={tab() === "Combat"}>
                 <CombatTab />
+              </Match>
+              <Match when={tab() === "Travel"}>
+                <TravelTab />
               </Match>
             </Switch>
           </div>
@@ -294,6 +305,200 @@ function CurrentCombat(props: { act: ActionView }) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Travel tab                                                          */
+/* ------------------------------------------------------------------ */
+
+/** Compass labels for the six grid directions. */
+const DIRECTION_LABEL: Record<Direction, string> = {
+  north: "North",
+  south: "South",
+  east: "East",
+  west: "West",
+  up: "Up",
+  down: "Down",
+};
+
+function TravelTab() {
+  const game = useGame();
+  const current = createMemo(() =>
+    game.world.action?.kind === "travel" ? game.world.action : null,
+  );
+
+  // Fetch the zone's destinations on entering the tab (and on zone change)
+  // unless already cached — same per-zone caching as the enemy roster.
+  createEffect(() => {
+    if (game.online() && !game.world.destinations[game.world.zone]) {
+      game.listDestinations();
+    }
+  });
+
+  return (
+    <Switch>
+      <Match when={current()}>{(act) => <CurrentTravel act={act()} />}</Match>
+      <Match when={game.world.lastRewards != null}>
+        <RewardView />
+      </Match>
+      <Match when={true}>
+        <DestinationBrowser />
+      </Match>
+    </Switch>
+  );
+}
+
+/** The destination picker: the current zone's adjacent authored zones on the
+ * left, the selected route's details + "Start travel" on the right. Travel
+ * takes no KC — the engine prices the journey from the formation's Speed. */
+function DestinationBrowser() {
+  const game = useGame();
+  const dests = createMemo(() => game.world.destinations[game.world.zone] ?? []);
+  const [selectedDir, setSelectedDir] = createSignal<Direction | null>(null);
+  const selected = createMemo(() => dests().find((d) => d.direction === selectedDir()) ?? null);
+
+  const start = (e: Event) => {
+    e.preventDefault();
+    const d = selected();
+    if (d) game.startTravel(d.direction);
+  };
+
+  return (
+    <Show
+      when={game.online()}
+      fallback={
+        <p class="text-base-content/50">
+          Offline — connect to a server to travel.
+        </p>
+      }
+    >
+      <div class="h-full grid md:grid-cols-2 gap-4">
+        <div class="flex flex-col overflow-hidden">
+          <p class="text-xs text-base-content/45 mb-2">
+            Routes out of zone <span class="font-mono">{game.world.zone}</span>
+          </p>
+          <ul class="grow overflow-y-auto menu menu-sm bg-base-200/40 rounded-box w-full flex-nowrap">
+            <Show
+              when={dests().length > 0}
+              fallback={<li class="p-2 text-base-content/40">Mapping the routes…</li>}
+            >
+              <For each={dests()}>
+                {(d) => (
+                  <li>
+                    <button
+                      classList={{ "menu-active": selectedDir() === d.direction }}
+                      onClick={() => setSelectedDir(d.direction)}
+                    >
+                      <span class="font-mono text-xs text-base-content/45 w-12 shrink-0">
+                        {DIRECTION_LABEL[d.direction]}
+                      </span>
+                      {d.name}
+                    </button>
+                  </li>
+                )}
+              </For>
+            </Show>
+          </ul>
+        </div>
+
+        <div class="overflow-y-auto">
+          <Show
+            when={selected()}
+            fallback={
+              <p class="text-base-content/40 mt-8 text-center">
+                Select a route to travel.
+              </p>
+            }
+          >
+            {(d) => (
+              <form class="flex flex-col gap-3" onSubmit={start}>
+                <h2 class="text-lg font-mono">{d().name}</h2>
+                <div class="flex flex-wrap gap-1">
+                  <span class="badge badge-sm badge-soft">{DIRECTION_LABEL[d().direction]}</span>
+                  <span class="badge badge-sm badge-soft">Danger {d().danger}</span>
+                  <span class="badge badge-sm badge-soft font-mono">{d().position}</span>
+                </div>
+                <p class="text-sm text-base-content/60 italic">
+                  Travel time is set by your formation's Speed and the
+                  destination's danger when the journey begins.
+                </p>
+                <div class="mt-2">
+                  <button type="submit" class="btn btn-sm btn-primary">
+                    Start travel
+                  </button>
+                </div>
+              </form>
+            )}
+          </Show>
+        </div>
+      </div>
+    </Show>
+  );
+}
+
+/** The in-flight travel action: journey progress, the destination, and the
+ * cached formation stats (Speed drives the pace). Travel resolves no rounds and
+ * accrues nothing, so there are no health pools or tally. */
+function CurrentTravel(props: { act: ActionView }) {
+  const game = useGame();
+  const travel = () => props.act.travel;
+  const phaseLabel = () =>
+    ({
+      preparation: "plotting",
+      execution: "traveling",
+      downtime: "downtime",
+      regroup: "regrouping",
+      resolution: "arriving",
+    })[props.act.phase];
+
+  return (
+    <div class="flex flex-col gap-4">
+      <div class="flex items-center gap-3 flex-wrap">
+        <h2 class="text-lg font-mono">Travel — {travel()?.destinationName}</h2>
+        <span
+          class="badge badge-sm"
+          classList={{ "badge-primary": props.act.phase === "execution" }}
+        >
+          {phaseLabel()}
+        </span>
+        <button class="btn btn-xs btn-soft hover:btn-error ml-auto" onClick={() => game.stopAction()}>
+          Stop action
+        </button>
+      </div>
+
+      <Show when={travel()}>
+        {(t) => (
+          <div class="flex flex-wrap gap-1">
+            <span class="badge badge-sm badge-soft">{DIRECTION_LABEL[t().direction]}</span>
+            <span class="badge badge-sm badge-soft">Danger {t().danger}</span>
+            <span class="badge badge-sm badge-soft font-mono">{t().destination}</span>
+          </div>
+        )}
+      </Show>
+
+      <div>
+        <div class="flex justify-between text-xs text-base-content/55 mb-1">
+          <span>Journey</span>
+          <span class="font-mono">
+            <Show when={props.act.phase !== "preparation"} fallback="plotting course…">
+              {props.act.kcDone}/{props.act.kcTarget} ticks
+            </Show>
+          </span>
+        </div>
+        <progress
+          class="progress progress-primary w-full"
+          max={Math.max(props.act.kcTarget, 1)}
+          value={props.act.kcDone}
+        />
+      </div>
+
+      <StatsPanel
+        title="Formation action stats"
+        stats={props.act.formationStats}
+        modifier={props.act.modifier}
+      />
+    </div>
+  );
+}
+
 function HpBar(props: { label: string; hp: number; max: number; cls: string }) {
   return (
     <div>
@@ -387,31 +592,60 @@ function RewardView() {
   const game = useGame();
   const r = () => game.world.lastRewards!;
 
+  // Quick restart re-issues the same action that just ended (the server keeps
+  // no restart state). Travel re-sends the same direction from the *current*
+  // zone, so after arriving it keeps heading that way if a zone lies beyond.
+  const canRestart = () =>
+    r().kind === "travel" ? game.world.lastTravel != null : game.world.lastCombat != null;
+
   const restart = () => {
-    const last = game.world.lastCombat;
-    if (last) game.startCombat(last.enemy, last.kc);
+    if (r().kind === "travel") {
+      const last = game.world.lastTravel;
+      if (last) game.startTravel(last.direction);
+    } else {
+      const last = game.world.lastCombat;
+      if (last) game.startCombat(last.enemy, last.kc);
+    }
   };
+
+  const isTravel = () => r().kind === "travel";
 
   return (
     <div class="max-w-md mx-auto mt-6 flex flex-col gap-4 text-center">
-      <h2 class="text-lg font-mono">
-        {r().stopped ? "Action stopped" : "Action complete"}
-      </h2>
-      <p class="text-base-content/60">
-        {r().kind} vs {r().targetName} — KC {r().kcDone}/{r().kcTarget}
-      </p>
-      <div class="bg-base-200/40 rounded-box p-4">
-        <p class="text-xs text-base-content/45 mb-2">Rewards committed</p>
-        <div class="flex justify-center">
-          <TallyBadges tally={r().rewards} />
-        </div>
-      </div>
+      <Show
+        when={isTravel()}
+        fallback={
+          <>
+            <h2 class="text-lg font-mono">
+              {r().stopped ? "Action stopped" : "Action complete"}
+            </h2>
+            <p class="text-base-content/60">
+              {r().kind} vs {r().targetName} — KC {r().kcDone}/{r().kcTarget}
+            </p>
+            <div class="bg-base-200/40 rounded-box p-4">
+              <p class="text-xs text-base-content/45 mb-2">Rewards committed</p>
+              <div class="flex justify-center">
+                <TallyBadges tally={r().rewards} />
+              </div>
+            </div>
+          </>
+        }
+      >
+        {/* Travel has no tally — its outcome is the arrival (or, when stopped,
+            no movement at all). */}
+        <h2 class="text-lg font-mono">{r().stopped ? "Journey abandoned" : "Arrived"}</h2>
+        <p class="text-base-content/60">
+          {r().stopped
+            ? `You never set out for ${r().targetName}.`
+            : `You have reached ${r().targetName}.`}
+        </p>
+      </Show>
       <div class="flex justify-center gap-2">
-        <button class="btn btn-sm btn-primary" disabled={!game.world.lastCombat} onClick={restart}>
-          Quick restart
+        <button class="btn btn-sm btn-primary" disabled={!canRestart()} onClick={restart}>
+          {isTravel() && !r().stopped ? "Travel onward" : "Quick restart"}
         </button>
         <button class="btn btn-sm btn-soft" onClick={() => game.clearRewards()}>
-          Choose a target
+          {isTravel() ? "Choose a route" : "Choose a target"}
         </button>
       </div>
     </div>

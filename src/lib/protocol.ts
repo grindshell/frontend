@@ -28,6 +28,10 @@ export const AUTH_PREFIX = "grindshell.auth.";
 /** Per-room role (backend `RoomRole`, serialized lowercase). */
 export type RoomRole = "admin" | "moderator" | "user" | "muted" | "banned";
 
+/** A grid direction (backend `Direction`, serialized lowercase) — the six
+ * cardinal axes a travel action can move along. */
+export type Direction = "north" | "south" | "east" | "west" | "up" | "down";
+
 /* ------------------------------------------------------------------ */
 /* Client → server                                                    */
 /* ------------------------------------------------------------------ */
@@ -61,7 +65,16 @@ export type ChatData =
 // player's formation is cached server-side and never supplied here.
 export type GameData =
   | { gt: "listEnemies" }
+  // The legal travel destinations from the current zone (the adjacent authored
+  // neighbours). Answered with a `destinationList` push, cached per zone like
+  // `listEnemies`.
+  | { gt: "listDestinations" }
   | { gt: "changeAction"; kind: "combat"; enemy: string; kc: number }
+  // Travel to the adjacent zone in `direction` (zones-and-travel.md "Travel").
+  // Unlike combat it takes no KC — the engine computes the tick cost from the
+  // formation's Speed and the destination's danger. Nacks when no authored
+  // zone lies that way.
+  | { gt: "changeAction"; kind: "travel"; direction: Direction }
   | { gt: "stopAction" }
   // Equip an unequipped gear instance onto a roster unit. The slot comes from
   // the gear's template (occupied single slots swap back to the inventory,
@@ -132,6 +145,18 @@ export type EnemyInfo = {
   name: string;
   descriptions: string[];
   drops: string[];
+};
+
+/** One legal travel destination of the current zone (`DestinationInfo`): an
+ * adjacent authored zone, with the direction it lies in (the value sent back in
+ * a travel `changeAction`). The tick cost is not previewed — it depends on the
+ * formation walk that only runs at Preparation. */
+export type DestinationInfo = {
+  direction: Direction;
+  /** The neighbour's grid position ("x,y,z"). */
+  position: string;
+  name: string;
+  danger: number;
 };
 
 /** The three numeric currencies (`CurrenciesView`, resources.md "Resource
@@ -290,6 +315,18 @@ export type CombatView = {
   enemyStats: ActionStatsView;
 };
 
+/** The travel-specific slice of an `ActionView` (`TravelView`): where the
+ * journey is headed. Progress rides the kind-agnostic `kcTarget`/`kcDone` (the
+ * engine-computed tick count and ticks elapsed). */
+export type TravelView = {
+  direction: Direction;
+  /** The destination zone's grid position ("x,y,z"). */
+  destination: string;
+  destinationName: string;
+  /** The destination's danger level (a travel-cost input). */
+  danger: number;
+};
+
 /** The full snapshot of an in-flight idle action (`ActionView`), pushed in the
  * `gameState` slice; `actionTick` deltas fold over it. The lifecycle fields are
  * kind-agnostic; the kind-specific slice nests under its key (`combat` iff
@@ -305,6 +342,8 @@ export type ActionView = {
   modifier: ActionStatsView;
   tally: RewardsView;
   combat?: CombatView;
+  /** The travel slice; present iff `kind === "travel"`. */
+  travel?: TravelView;
 };
 
 // Tagged on `t` (camelCase). Mirrors `Outbound`. `from` is the sender's
@@ -329,6 +368,9 @@ export type ServerMessage =
   // The answer to `listEnemies`: the knowledge-filtered roster of `zone`.
   // Cached client-side per zone.
   | { t: "enemyList"; zone: string; enemies: EnemyInfo[] }
+  // The answer to `listDestinations`: the adjacent authored zones reachable
+  // from `from`. Cached client-side per zone.
+  | { t: "destinationList"; from: string; destinations: DestinationInfo[] }
   // The per-tick delta for the in-flight action, batched at the end of the
   // global tick. `phase` is the lifecycle phase this tick executed; absent
   // fields are unchanged and fold over the `gameState` baseline. The delta is
@@ -338,6 +380,10 @@ export type ServerMessage =
       t: "actionTick";
       phase: ActionPhase;
       attacks?: AttackReport[];
+      /** The KC goal — present when it (re)computes, i.e. on the Preparation
+       * tick. Combat's is already known; travel's engine-computed tick count is
+       * learned here. */
+      kcTarget?: number;
       kcDone?: number;
       formationHp?: number;
       formationMaxHp?: number;
