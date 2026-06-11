@@ -97,8 +97,16 @@ export type InventoryState = {
   general: GeneralResourcesView;
   /** Item stacks, sorted by template id server-side. */
   items: ItemStackView[];
-  /** Unequipped gear instances (equipped gear lives on the roster units). */
+  /** The viewed PAGE of unequipped gear instances (the collection is
+   * unbounded, the snapshot is not; equipped gear lives on the roster
+   * units). Pick the page with `requestGearPage`. */
   gear: GearView[];
+  /** The 0-based page `gear` carries (server-clamped). */
+  gearPage: number;
+  /** Total pages (≥ 1). */
+  gearPages: number;
+  /** Total unequipped instances across all pages. */
+  gearTotal: number;
 };
 
 /** A reward tally as one log-friendly line ("2 kills, 9 credits, 1 met, …"). */
@@ -157,6 +165,9 @@ export type Game = {
   equipGear: (unit: string, instanceId: number, onError?: (reason?: string) => void) => void;
   /** Unequip a gear instance (by id) back into the inventory. */
   unequipGear: (unit: string, instanceId: number, onError?: (reason?: string) => void) => void;
+  /** Select the page of unequipped gear the inventory snapshots carry
+   * (answered with a fresh `inventory` push; out-of-range pages clamp). */
+  requestGearPage: (page: number) => void;
   /** Use a consumable on the player's own formation (items.md "Consumables");
    * the server acks with fresh inventory + effects snapshots or nacks
    * (`onError`). */
@@ -276,6 +287,9 @@ export function GameProvider(props: ParentProps) {
           general: msg.general,
           items: msg.items,
           gear: msg.gear,
+          gearPage: msg.gearPage,
+          gearPages: msg.gearPages,
+          gearTotal: msg.gearTotal,
         });
         break;
       case "roster":
@@ -506,6 +520,13 @@ export function GameProvider(props: ParentProps) {
     send({ t: "game", gt: "unequipGear", unit, instanceId }, { onNack: onError });
   };
 
+  const requestGearPage = (page: number) => {
+    if (!online()) return;
+    // The server clamps and answers with a fresh inventory push; like
+    // listEnemies this is a read, so there is no ack to correlate.
+    send({ t: "game", gt: "gearPage", page: Math.max(0, Math.floor(page)) });
+  };
+
   const useConsumable = (item: string, onError?: (reason?: string) => void) => {
     if (!online()) {
       onError?.("offline — consumables need a server connection");
@@ -598,6 +619,7 @@ export function GameProvider(props: ParentProps) {
     stopAction,
     equipGear,
     unequipGear,
+    requestGearPage,
     useConsumable,
     clearRewards,
     logLocal,

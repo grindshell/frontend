@@ -67,6 +67,12 @@ export type GameData =
   // Unequip by instance id (unique across slots and trinkets). Never refused
   // for a worn piece — requirements gate equipping only.
   | { gt: "unequipGear"; unit: string; instanceId: number }
+  // Select the page of unequipped gear the inventory snapshot carries (the
+  // inventory is unbounded; the wire snapshot is not). Answered with a fresh
+  // `inventory` push (no ack); out-of-range pages clamp to the last one. The
+  // choice sticks for this connection's later snapshots and resets to 0 on
+  // reconnect.
+  | { gt: "gearPage"; page: number }
   // Use a consumable (items.md "Consumables"): consumes one and applies its
   // Zone Effect at `target` scope. The server implements `formation`; `zone`
   // and `world` nack as not-yet-available. Nacks when the item is absent or
@@ -302,17 +308,24 @@ export type ServerMessage =
       rewards: RewardsView;
     }
   // The authoritative inventory snapshot (inventory.md): committed holdings,
-  // pushed at connect, on `requestState`, and after every mutation (a commit,
-  // an equip/unequip). The client REPLACES its inventory from this — per-tick
-  // tallies are narration, never client-side accumulation. `items` is sorted
-  // by template id; `gear` is the UNEQUIPPED instances in mint order
-  // (equipped gear lives on the roster units).
+  // pushed at connect, on `requestState`, after every mutation (a commit, an
+  // equip/unequip), and in answer to a `gearPage` op. The client REPLACES its
+  // inventory from this — per-tick tallies are narration, never client-side
+  // accumulation. `items` is sorted by template id; `gear` is ONE PAGE of the
+  // unequipped instances in acquire order (the collection is unbounded, the
+  // snapshot is not — equipped gear lives on the roster units): `gearPage` is
+  // the 0-based page carried (requests beyond the end clamp to the last
+  // page), `gearPages` the total page count (≥ 1), `gearTotal` the total
+  // unequipped count across all pages.
   | {
       t: "inventory";
       currencies: CurrenciesView;
       general: GeneralResourcesView;
       items: ItemStackView[];
       gear: GearView[];
+      gearPage: number;
+      gearPages: number;
+      gearTotal: number;
     }
   // The authoritative roster snapshot (units.md): every owned unit with
   // trained/effective stats and equipped gear. Pushed at connect, on

@@ -168,6 +168,11 @@ const failingReqs = (g: GearView, unit: UnitView): string[] =>
 function GearSection() {
   const game = useGame();
   const gear = () => game.world.inventory?.gear ?? [];
+  // Gear paging (the snapshot carries one server-clamped page; the pager
+  // requests another and the answering inventory push re-renders the table).
+  const gearPage = () => game.world.inventory?.gearPage ?? 0;
+  const gearPages = () => game.world.inventory?.gearPages ?? 1;
+  const gearTotal = () => game.world.inventory?.gearTotal ?? 0;
   const roster = () => game.world.roster ?? [];
   const [unitId, setUnitId] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -193,7 +198,10 @@ function GearSection() {
       <div class="bg-base-200/40 rounded-box p-3">
         <div class="flex items-baseline gap-2 mb-2 flex-wrap">
           <p class="text-xs text-base-content/45">Gear</p>
-          <span class="text-[10px] text-base-content/35">// unequipped instances</span>
+          <span class="text-[10px] text-base-content/35">
+            // unequipped instances
+            <Show when={gearTotal() > gear().length}> ({gearTotal()} total)</Show>
+          </span>
           <Show when={roster().length > 1}>
             <select
               class="select select-xs ml-auto"
@@ -254,6 +262,27 @@ function GearSection() {
               </For>
             </tbody>
           </table>
+        </Show>
+        <Show when={gearPages() > 1}>
+          <div class="flex items-center justify-center gap-2 mt-2">
+            <button
+              class="btn btn-xs btn-ghost"
+              disabled={gearPage() === 0}
+              onClick={() => game.requestGearPage(gearPage() - 1)}
+            >
+              ‹ prev
+            </button>
+            <span class="font-mono text-xs text-base-content/55 tabular-nums">
+              page {gearPage() + 1}/{gearPages()}
+            </span>
+            <button
+              class="btn btn-xs btn-ghost"
+              disabled={gearPage() + 1 >= gearPages()}
+              onClick={() => game.requestGearPage(gearPage() + 1)}
+            >
+              next ›
+            </button>
+          </div>
         </Show>
         <Show when={error()}>
           <p class="text-xs text-error mt-2">✗ {error()}</p>
