@@ -10,8 +10,10 @@
 //
 // The backend routes CHAT variants to the chat handler and GAME variants (plus
 // the game's share of `requestState`) to the game engine. Live gameplay
-// surfaces today: auth, chat, and the idle-combat action lifecycle (enemy
-// listings, change/stop action, per-tick deltas, rewards). The exact message
+// surfaces today: auth, chat, the idle-combat action lifecycle (enemy
+// listings, change/stop action, per-tick deltas, rewards), inventory/gear
+// (holdings snapshots, gear paging, equip/unequip), the unit roster, and
+// consumables + formation-scoped zone effects. The exact message
 // envelope is owned by the backend/client and is not frozen in canon —
 // accounts.md fixes the *behavior* of the connect-time state push, not its
 // wire shape — so this mirrors the backend's current implementation and moves

@@ -1,14 +1,5 @@
-import {
-  For,
-  Match,
-  Show,
-  Switch,
-  createSignal,
-  onCleanup,
-  onMount,
-  type JSX,
-} from "solid-js";
-import { useGame } from "../../../lib/game-context";
+import { For, Match, Show, Switch, type JSX } from "solid-js";
+import { actionTarget, summarizeRewards, useGame } from "../../../lib/game-context";
 
 // Overview cards — condensed views of the underlying game pages. Each body
 // receives a { col, row } span and adapts its density to the card's area.
@@ -63,79 +54,118 @@ function Stat(props: {
 /* ====================================================================== */
 
 /* ---------- ACTION ---------- */
+// The in-flight idle action from the game context (`world.action`: the
+// `gameState` baseline folded with `actionTick` deltas) — the same source the
+// TopBar and the Actions page render. Shows an idle state when nothing runs.
+const PHASE_LABEL: Record<string, string> = {
+  preparation: "preparing",
+  execution: "fighting",
+  downtime: "downtime",
+  regroup: "regrouping",
+  resolution: "resolving",
+};
+
 function ActionCard(props: { span: Span }) {
-  const [tick, setTick] = createSignal(0);
-  onMount(() => {
-    const t = setInterval(() => setTick((x) => (x + 1) % 100), 120);
-    onCleanup(() => clearInterval(t));
-  });
+  const game = useGame();
   const T = () => tier(props.span);
+  const action = () => game.world.action;
 
   return (
-    <Switch>
-      <Match when={T() === "micro"}>
-        <div class="h-full flex flex-col justify-between">
-          <div class="font-mono text-sm font-semibold">TRAVEL</div>
-          <progress class="progress progress-primary w-full h-1" value={tick()} max="100" />
-          <div class="font-mono text-[10px] text-base-content/50">14/18 · {tick()}%</div>
-        </div>
-      </Match>
-
-      <Match when={T() === "small"}>
-        <div class="h-full flex flex-col gap-2">
-          <div class="font-mono text-lg font-semibold leading-tight">TRAVEL</div>
-          <div class="text-[11px] text-base-content/50 -mt-1">→ Sector 04 / Ridgeline</div>
-          <progress class="progress progress-primary w-full h-1.5" value={tick()} max="100" />
-          <div class="flex justify-between text-[10px] font-mono text-base-content/60">
-            <span>14/18 steps</span>
-            <span>{tick()}%</span>
-          </div>
-        </div>
-      </Match>
-
-      <Match when={true}>
-        <div class="flex flex-col h-full gap-3">
-          <div class="flex items-baseline gap-2 flex-wrap">
-            <span class="font-mono text-2xl font-semibold tracking-tight">TRAVEL</span>
-            <span class="text-xs text-base-content/50">→ Sector 04 / Ridgeline</span>
-          </div>
-          <div class="space-y-1.5">
-            <div class="flex justify-between text-[11px] font-mono text-base-content/60">
-              <span>step 14 / 18</span>
-              <span>{tick()}%</span>
-            </div>
-            <progress class="progress progress-primary w-full h-1.5" value={tick()} max="100" />
-          </div>
-          <div class="grid grid-cols-3 gap-2 mt-auto text-center">
-            <Stat label="energy" value="78" sub="/100" />
-            <Stat label="eta" value="03:42" sub="m" />
-            <Stat label="encounters" value="2" sub="hostile" tone="warning" />
-          </div>
-          <Show when={T() === "large"}>
-            <div class="border-t border-base-300/60 pt-3 mt-1 grid grid-cols-2 gap-2 text-[11px]">
-              <div>
-                <div class="text-[10px] uppercase tracking-wider text-base-content/45 mb-1">
-                  queued route
-                </div>
-                <div class="font-mono text-base-content/75 leading-relaxed">
-                  Down · Down · North · Down · Down · East · …
-                </div>
-              </div>
-              <div>
-                <div class="text-[10px] uppercase tracking-wider text-base-content/45 mb-1">
-                  recent
-                </div>
-                <ul class="font-mono text-[11px] text-base-content/70 space-y-0.5">
-                  <li>14:42:11 — entered Ridgeline</li>
-                  <li>14:40:02 — picked up Pyrite ×8</li>
-                  <li>14:38:10 — chat: pulling north</li>
-                </ul>
-              </div>
+    <Show
+      when={action()}
+      fallback={
+        <div class="h-full flex flex-col items-center justify-center text-center gap-1">
+          <div class="font-mono text-sm text-base-content/55 uppercase">idle</div>
+          <Show when={T() !== "micro"}>
+            <div class="text-[11px] text-base-content/40">
+              No action running — pick a target on the Actions page.
             </div>
           </Show>
         </div>
-      </Match>
-    </Switch>
+      }
+    >
+      {(a) => (
+        <Switch>
+          <Match when={T() === "micro"}>
+            <div class="h-full flex flex-col justify-between">
+              <div class="font-mono text-sm font-semibold uppercase">{a().kind}</div>
+              <progress
+                class="progress progress-primary w-full h-1"
+                value={a().kcDone}
+                max={a().kcTarget}
+              />
+              <div class="font-mono text-[10px] text-base-content/50">
+                KC {a().kcDone}/{a().kcTarget}
+              </div>
+            </div>
+          </Match>
+
+          <Match when={T() === "small"}>
+            <div class="h-full flex flex-col gap-2">
+              <div class="font-mono text-lg font-semibold leading-tight uppercase">{a().kind}</div>
+              <div class="text-[11px] text-base-content/50 -mt-1">
+                vs {actionTarget(a())} · {PHASE_LABEL[a().phase] ?? a().phase}
+              </div>
+              <progress
+                class="progress progress-primary w-full h-1.5"
+                value={a().kcDone}
+                max={a().kcTarget}
+              />
+              <div class="flex justify-between text-[10px] font-mono text-base-content/60">
+                <span>KC {a().kcDone}/{a().kcTarget}</span>
+                <span>
+                  HP {a().formationHp}/{a().formationMaxHp}
+                </span>
+              </div>
+            </div>
+          </Match>
+
+          <Match when={true}>
+            <div class="flex flex-col h-full gap-3">
+              <div class="flex items-baseline gap-2 flex-wrap">
+                <span class="font-mono text-2xl font-semibold tracking-tight uppercase">
+                  {a().kind}
+                </span>
+                <span class="text-xs text-base-content/50">vs {actionTarget(a())}</span>
+              </div>
+              <div class="space-y-1.5">
+                <div class="flex justify-between text-[11px] font-mono text-base-content/60">
+                  <span>kill count</span>
+                  <span>
+                    {a().kcDone} / {a().kcTarget}
+                  </span>
+                </div>
+                <progress
+                  class="progress progress-primary w-full h-1.5"
+                  value={a().kcDone}
+                  max={a().kcTarget}
+                />
+              </div>
+              <div class="grid grid-cols-3 gap-2 mt-auto text-center">
+                <Stat
+                  label="formation hp"
+                  value={a().formationHp}
+                  sub={`/${a().formationMaxHp}`}
+                  tone={a().formationHp < a().formationMaxHp / 2 ? "warning" : undefined}
+                />
+                <Stat label="phase" value={PHASE_LABEL[a().phase] ?? a().phase} />
+                <Stat label="kills" value={a().tally.kills} />
+              </div>
+              <Show when={T() === "large"}>
+                <div class="border-t border-base-300/60 pt-3 mt-1 text-[11px]">
+                  <div class="text-[10px] uppercase tracking-wider text-base-content/45 mb-1">
+                    accrued (commits when the action ends)
+                  </div>
+                  <div class="font-mono text-base-content/75 leading-relaxed">
+                    {summarizeRewards(a().tally)}
+                  </div>
+                </div>
+              </Show>
+            </div>
+          </Match>
+        </Switch>
+      )}
+    </Show>
   );
 }
 
@@ -481,41 +511,51 @@ function MarketOrdersCard(props: { span: Span; side: "buy" | "sell" }) {
 }
 
 /* ---------- FORMATION ---------- */
-type Unit = { id: number; n: string; role: string; hp: number; status: string };
-const UNITS: Unit[] = [
-  { id: 2, n: "Adventurer", role: "Vanguard", hp: 88, status: "ok" },
-  { id: 3, n: "Brigid", role: "Medic", hp: 72, status: "ok" },
-  { id: 5, n: "Hollow-7", role: "Skirmish", hp: 41, status: "hurt" },
-  { id: 7, n: "Vex", role: "Sapper", hp: 64, status: "ok" },
-];
-const statusTone = (s: string) =>
-  s === "hurt" ? "text-warning" : s === "down" ? "text-error" : "text-success";
-const hpBar = (hp: number) =>
-  hp > 70 ? "bg-success h-full" : hp > 40 ? "bg-warning h-full" : "bg-error h-full";
+// The live roster from the game context (`world.roster`, the server's
+// authoritative `roster` push): unit names + effective (trained + gear)
+// stats. Canon (formations.md): a 5x5 grid with a soft cap of 5 occupied
+// cells — grid positions aren't on the wire yet, so only the roster shows.
+const ROSTER_SOFT_CAP = 5;
+const ROSTER_STAT_KEYS = [
+  ["str", "STR"],
+  ["vit", "VIT"],
+  ["dex", "DEX"],
+  ["agi", "AGI"],
+  ["int", "INT"],
+  ["wis", "WIS"],
+] as const;
 
 function FormationCard(props: { span: Span }) {
+  const game = useGame();
   const T = () => tier(props.span);
-  const avgHp = Math.round(UNITS.reduce((a, u) => a + u.hp, 0) / UNITS.length);
+  const units = () => game.world.roster ?? [];
 
   return (
     <Switch>
       <Match when={T() === "micro"}>
         <div class="h-full flex flex-col items-center justify-center text-center">
-          <div class="text-[9px] uppercase tracking-wider text-base-content/50">squad</div>
+          <div class="text-[9px] uppercase tracking-wider text-base-content/50">roster</div>
           <div class="font-mono text-sm">
-            {UNITS.length}/6 · {avgHp}hp
+            {units().length} · cap {ROSTER_SOFT_CAP}
           </div>
         </div>
       </Match>
 
       <Match when={T() === "small"}>
-        <ul class="h-full text-[11px] flex flex-col gap-1">
-          <For each={UNITS}>
+        <ul class="h-full text-[11px] flex flex-col gap-1 overflow-hidden">
+          <For
+            each={units()}
+            fallback={
+              <li class="text-base-content/40">Waiting for the roster snapshot…</li>
+            }
+          >
             {(u) => (
               <li class="flex items-center gap-2">
-                <span class="font-mono text-[10px] text-base-content/40">#{u.id}</span>
-                <span class="truncate flex-1">{u.n}</span>
-                <span class={"font-mono " + statusTone(u.status)}>{u.hp}</span>
+                <span class="truncate flex-1">{u.name}</span>
+                <Show when={u.isPlayer}>
+                  <span class="text-[9px] uppercase tracking-wider text-base-content/40">you</span>
+                </Show>
+                <span class="font-mono text-base-content/60">VIT {u.effective.vit}</span>
               </li>
             )}
           </For>
@@ -525,40 +565,56 @@ function FormationCard(props: { span: Span }) {
       <Match when={true}>
         <div class="flex flex-col h-full">
           <div class="flex justify-between items-baseline mb-1.5">
-            <span class="text-[10px] uppercase tracking-wider text-base-content/45">main squad</span>
+            <span class="text-[10px] uppercase tracking-wider text-base-content/45">roster</span>
             <span class="text-[10px] font-mono text-base-content/55">
-              {UNITS.length} / 6 deployed
+              {units().length} units · soft cap {ROSTER_SOFT_CAP}
             </span>
           </div>
           <ul class="text-sm divide-y divide-base-300/40 overflow-y-auto flex-1">
-            <For each={UNITS}>
+            <For
+              each={units()}
+              fallback={
+                <li class="py-2 text-xs text-base-content/40">
+                  Waiting for the roster snapshot…
+                </li>
+              }
+            >
               {(u) => (
-                <li class="flex items-center gap-3 py-1.5">
-                  <span class="font-mono text-[10px] text-base-content/40 w-5">#{u.id}</span>
-                  <span class="flex-1 min-w-0">
-                    <span class="truncate block leading-tight">{u.n}</span>
-                    <span class="text-[10px] text-base-content/45">{u.role}</span>
-                  </span>
-                  <div class="w-16">
-                    <div class="text-[10px] font-mono text-right text-base-content/60 leading-none mb-0.5">
-                      {u.hp}
-                    </div>
-                    <div class="h-1 bg-base-300 rounded overflow-hidden">
-                      <div class={hpBar(u.hp)} style={{ width: `${u.hp}%` }} />
-                    </div>
+                <li class="py-1.5">
+                  <div class="flex items-baseline gap-2">
+                    <span class="truncate min-w-0">{u.name}</span>
+                    <Show when={u.isPlayer}>
+                      <span class="badge badge-xs badge-soft">player</span>
+                    </Show>
+                    <Show when={u.equipment.length > 0}>
+                      <span class="ml-auto text-[10px] text-base-content/45 shrink-0">
+                        {u.equipment.length} equipped
+                      </span>
+                    </Show>
                   </div>
-                  <span class={"text-[10px] uppercase font-medium w-10 text-right " + statusTone(u.status)}>
-                    {u.status}
-                  </span>
+                  <div class="font-mono text-[10px] text-base-content/55 mt-0.5">
+                    <For
+                      each={
+                        T() === "large"
+                          ? [...ROSTER_STAT_KEYS]
+                          : [...ROSTER_STAT_KEYS].slice(0, 2)
+                      }
+                    >
+                      {([k, label]) => (
+                        <span class="mr-2">
+                          {label} {u.effective[k]}
+                        </span>
+                      )}
+                    </For>
+                  </div>
                 </li>
               )}
             </For>
           </ul>
           <Show when={T() === "large"}>
-            <div class="mt-3 pt-3 border-t border-base-300/60 grid grid-cols-3 gap-2 text-center">
-              <Stat label="formation" value="Wedge" />
-              <Stat label="morale" value="+12" />
-              <Stat label="cohesion" value="84" sub="/100" />
+            <div class="mt-3 pt-3 border-t border-base-300/60 text-[11px] text-base-content/45">
+              Formation grid placement isn't served by the backend yet — units fight as a
+              pooled formation.
             </div>
           </Show>
         </div>
@@ -568,36 +624,33 @@ function FormationCard(props: { span: Span }) {
 }
 
 /* ---------- ACTIVITY LOG ---------- */
-const LOG_LINES = [
-  { t: "14:42:11", k: "info", m: "Stepped into Ridgeline (14,7)." },
-  { t: "14:41:58", k: "warn", m: "Hostile signal detected — 2 entities." },
-  { t: "14:41:30", k: "info", m: "Travel queue: 14 / 18 steps remaining." },
-  { t: "14:40:02", k: "loot", m: "Picked up 8× Pyrite Shard." },
-  { t: "14:39:11", k: "trade", m: "Sell order filled: 60× Iron Ore @ 24cr." },
-  { t: "14:38:44", k: "info", m: "Energy regen +4 (rationed bread)." },
-  { t: "14:38:10", k: "chat", m: "@vex: pulling north on my mark." },
-  { t: "14:37:55", k: "warn", m: "Bandage stock low (6 remaining)." },
-  { t: "14:37:20", k: "info", m: "Crossed waypoint marker β-3." },
-  { t: "14:36:48", k: "loot", m: "Picked up 12× Iron Ore." },
-];
+// The live action log from the game context (`world.log`): per-tick combat
+// narration, rewards, and failures, newest last (the Actions-page
+// convention). The card shows the tail so the latest lines stay visible.
 const LOG_TAG: Record<string, string> = {
-  info: "text-base-content/50",
-  warn: "text-warning",
-  loot: "text-success",
-  trade: "text-primary",
-  chat: "text-info",
+  info: "text-base-content/55",
+  combat: "text-base-content/80",
+  failure: "text-error",
+  reward: "text-success",
+  local: "text-base-content/40 italic",
 };
 
 function LogCard(props: { span: Span }) {
+  const game = useGame();
   const T = () => tier(props.span);
-  const lines = () => (T() === "small" ? LOG_LINES.slice(0, 4) : LOG_LINES);
+  const tail = (n: number) => game.world.log.slice(-n);
+  const latest = () => game.world.log[game.world.log.length - 1];
 
   return (
     <Switch>
       <Match when={T() === "micro"}>
-        <div class="h-full flex flex-col justify-center font-mono text-[10px] text-base-content/70 leading-tight">
-          <div class="text-base-content/40">14:42</div>
-          <div class="truncate">Stepped into Ridgeline.</div>
+        <div class="h-full flex flex-col justify-center font-mono text-[10px] leading-tight">
+          <Show
+            when={latest()}
+            fallback={<div class="text-base-content/35">— the log is quiet —</div>}
+          >
+            {(l) => <div class={"truncate " + (LOG_TAG[l().kind] ?? "")}>{l().text}</div>}
+          </Show>
         </div>
       </Match>
 
@@ -609,16 +662,20 @@ function LogCard(props: { span: Span }) {
             "line-height": "1.55",
           }}
         >
-          <For each={lines()}>
+          <For
+            each={tail(T() === "small" ? 4 : 50)}
+            fallback={<li class="text-base-content/35">— the log is quiet —</li>}
+          >
             {(l) => (
               <li class="flex gap-2 py-0.5">
-                <span class="text-base-content/30 shrink-0">{l.t}</span>
                 <Show when={T() !== "small"}>
-                  <span class={"shrink-0 uppercase text-[10px] mt-[2px] w-12 " + LOG_TAG[l.k]}>
-                    {l.k}
+                  <span class={"shrink-0 uppercase text-[10px] mt-[2px] w-12 " + (LOG_TAG[l.kind] ?? "")}>
+                    {l.kind}
                   </span>
                 </Show>
-                <span class="text-base-content/85 truncate">{l.m}</span>
+                <span class={"truncate " + (LOG_TAG[l.kind] ?? "text-base-content/85")}>
+                  {l.text}
+                </span>
               </li>
             )}
           </For>

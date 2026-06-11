@@ -14,8 +14,18 @@ import type { ActionStatsView, ActionView, RewardsView } from "../../lib/protoco
 // the collapsible action log (also the future MUD-interaction surface) on the
 // right. Combat is the only live action — the other tabs are placeholders
 // until their server-side action models land (see frontend CLAUDE.md §6).
-const TABS = ["Combat", "Travel", "Harvest", "Craft", "Construct"] as const;
+// The tab set mirrors canon's action kinds (actions.md: combat, harvesting,
+// crafting, travel — housing construction is a crafting action, not a kind).
+const TABS = ["Combat", "Travel", "Harvest", "Craft"] as const;
 type Tab = (typeof TABS)[number];
+
+/** Tab label → the wire `kind` id the backend uses for it. */
+const KIND_BY_TAB: Record<Tab, string> = {
+  Combat: "combat",
+  Travel: "travel",
+  Harvest: "harvesting",
+  Craft: "crafting",
+};
 
 export function Actions() {
   const game = useGame();
@@ -50,7 +60,7 @@ export function Actions() {
                   onClick={() => setTab(t)}
                 >
                   {t}
-                  <Show when={game.world.action?.kind === t.toLowerCase()}>
+                  <Show when={game.world.action?.kind === KIND_BY_TAB[t]}>
                     <span class="ml-1 text-primary">●</span>
                   </Show>
                 </button>

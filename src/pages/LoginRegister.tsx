@@ -274,6 +274,10 @@ function validateEmail(email: string): string | undefined {
   if (parts.length !== 2 || parts[0].length < 1) return "Invalid email.";
   const labels = parts[1].split(".");
   if (labels.length < 2 || labels.some((l) => l.length < 1)) return "Invalid email domain.";
+  // Mirror the backend's TLD rule (crates/common/src/validate.rs): the final
+  // label must be at least 2 characters, so "a@b.c" fails here too instead of
+  // bouncing off the server with a generic 400.
+  if (labels[labels.length - 1].length < 2) return "Invalid email domain.";
   return undefined;
 }
 

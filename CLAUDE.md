@@ -34,8 +34,8 @@ Mirrors the `editor/` stack on purpose (same Tauri + Solid + Tailwind + DaisyUI 
 **Server (the `../backend` Rust workspace)**
 
 - The client talks to the backend directly over HTTP + WebSocket (not through Tauri). What's
-  actually wired today is **auth + chat only**; see §6 for the data layer and exactly which
-  contracts are real.
+  actually wired today: **auth, chat, idle actions (combat), inventory, roster/gear, and
+  consumables/effects**; see §6 for the data layer and exactly which contracts are real.
 
 **Tooling**
 
@@ -70,7 +70,7 @@ src/
   components/
     Icon.tsx          hero-icon stroked glyph set (name → SVG path)
     Sidebar.tsx       collapsible nav rail; router-driven active state + navigation
-    TopBar.tsx        travel progress bar + chat show/hide toggle
+    TopBar.tsx        current-action indicator (kind + KC progress) + chat show/hide toggle
     ChatPanel.tsx     channel rail + send row + transcript; consumes the game context
     TextInput.tsx     labelled input with validation-error / optional hint
     CFTurnstile.tsx   Cloudflare Turnstile widget (lazy script load, optional)
@@ -107,15 +107,15 @@ dist/                 Vite build output (gitignored)
 - **Navigation/active state**: `Sidebar` and the Overview cards use `useNavigate` /
   `useLocation` from `@solidjs/router`. There is no per-component "current route" signal —
   the URL is the source of truth.
-- **Routes** (ported from `frontend-old/src/routes.ts`):
-  `/` Overview · `/actions` · `/area` · `/formation` · `/global-market` · `/profile` ·
-  `/rankings` · `/time-tracker` · `/resource-editor` · `/about` · `/settings`.
-- **Page fidelity**: pages that were self-contained in the old client are ported with real
-  behavior (About, Formation, the Actions action-selector/travel-route UI, theme Settings).
-  Pages that depended on the old `game-context` (live server state) are **themed placeholders**
-  for now (`PagePlaceholder`) — they are intentionally not faked with invented game data. The
-  one exception is **chat**, which is real (see §6); the ChatPanel is wired to the backend.
-  Don't invent server/state shapes; see §6 and §7.
+- **Routes** (ported from `frontend-old/src/routes.ts`, plus `/inventory`):
+  `/` Overview · `/actions` · `/area` · `/formation` · `/inventory` · `/global-market` ·
+  `/profile` · `/rankings` · `/time-tracker` · `/resource-editor` · `/about` · `/settings`.
+- **Page fidelity**: pages backed by live server state render it for real — Actions
+  (idle combat), Inventory (holdings/gear/effects), Formation (the roster; grid
+  placement is an honest "not served yet" note), chat, and self-contained pages (About,
+  theme Settings). Pages whose backing surface the backend doesn't serve yet (area,
+  markets, …) are **themed placeholders** (`PagePlaceholder`) — they are intentionally
+  not faked with invented game data. Don't invent server/state shapes; see §6 and §7.
 
 ## 5. The Overview card system
 
@@ -133,7 +133,10 @@ the client's visual language.
 - **Tiers**: each card `Body` switches on `tier(span)` (micro/small/medium/large by area) via
   `<Switch>/<Match>` so it re-flows live as it's resized. Keep new card bodies reactive the
   same way — don't early-return on a non-reactive read.
-- Card body data is currently **static placeholder** content.
+- Card body data: the **Action, Inventory, Formation, and Activity Log** cards render live
+  state from the game context (`world.action` / `world.inventory` / `world.roster` /
+  `world.log`); the **Map and Market** cards are still static placeholder content (their
+  surfaces aren't served yet — see §6).
 
 ## 6. Data layer (server connection)
 
@@ -224,11 +227,14 @@ Config + endpoints: [config.ts](src/lib/config.ts) / `.env.example`.
   and commit.
 - Mirror the pinned versions in §1 when adding the deps the design names. Don't swap pnpm.
 - **No invented game/server contracts.** Wire types in [protocol.ts](src/lib/protocol.ts)
-  mirror the backend's real serde definitions (auth + chat). Anything the backend doesn't yet
-  serve (inventory, formation, actions, combat, ticks, area) is **not** modeled — when a page
-  needs that data, surface the need rather than hardcoding a fake shape. The canonical data
-  model is decided in `knowledge-base/` and implemented server-side first; grow the data layer
-  to match the backend, not ahead of it.
+  mirror the backend's real serde definitions: auth, chat, the idle-combat action lifecycle
+  (`gameState`/`actionTick`/`actionRewards`/enemy listings), inventory, roster/gear, and
+  consumables/effects — the backend serves all of these today. Anything the backend doesn't
+  yet serve (travel/area/zones beyond the zone string, markets, formation grid editing,
+  multiplayer/boss combat) is **not** modeled — when a page needs that data, surface the
+  need rather than hardcoding a fake shape. The canonical data model is decided in
+  `knowledge-base/` and implemented server-side first; grow the data layer to match the
+  backend, not ahead of it.
 - Run `pnpm typecheck` before considering a change done. `tsconfig` is strict
   (`noUnusedLocals`/`noUnusedParameters` on).
 - Solid idioms: `class` not `className`; `<For>`/`<Index>` over `.map`; `<Show>`/`<Switch>`

@@ -1,12 +1,14 @@
 // The game context: the client's single connection to backend state.
 //
 // Scope is grounded in what the backend actually serves: AUTH (a session
-// token), CHAT (rooms + DMs), and the IDLE-ACTION lifecycle (combat only
-// today): the `gameState` slice of the connect-time push, zone enemy listings,
+// token), CHAT (rooms + DMs), the IDLE-ACTION lifecycle (combat only today):
+// the `gameState` slice of the connect-time push, zone enemy listings,
 // change/stop action, per-tick `actionTick` deltas, and the final
-// `actionRewards`. Surfaces the backend doesn't serve (inventory, formation,
-// area, markets) stay unmodeled — gameplay pages keep local placeholders until
-// the wire grows them.
+// `actionRewards`; plus the INVENTORY/roster/effects snapshots (holdings,
+// units + gear, formation-scoped Zone Effects) and their equip/use ops.
+// Surfaces the backend doesn't serve (formation grid editing, travel/area,
+// markets) stay unmodeled — those pages keep placeholders until the wire
+// grows them.
 //
 // In `uiDev`/offline mode there is no socket; chat sends echo locally so the UI
 // is exercisable without a server, and actions report that a server is needed.
@@ -346,7 +348,7 @@ export function GameProvider(props: ParentProps) {
             pushLog("Downtime — the formation reels. (burns 1 KC)", "failure");
             break;
           case "regroup":
-            pushLog("Regroup — formation health restored; resuming.", "info");
+            pushLog("Regroup — formation health restored; resuming. (burns 1 KC)", "info");
             break;
           case "resolution":
             break;
@@ -464,8 +466,9 @@ export function GameProvider(props: ParentProps) {
   };
 
   /** Ask the server for a full state refresh (top-level control message,
-   * rate-limited per connection). The server replies with the relevant state
-   * push(es) — today, the chat `chatState`. */
+   * rate-limited per connection). The server fans it to both subsystems: chat
+   * re-pushes `chatState`, the game re-pushes `gameState` + `inventory` +
+   * `roster` + `effects`. */
   const resync = () => {
     if (online()) send({ t: "requestState" });
   };

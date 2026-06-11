@@ -80,7 +80,8 @@ export function Settings() {
             {confirmClear() ? "Confirm — clear everything" : "Clear local data"}
           </button>
           <p class="text-sm text-base-content/55">
-            Wipes saved theme, layout, and other local state. Can help fix UI errors.
+            Wipes saved theme, layout, and other local state — including your session token,
+            so this also signs you out. Can help fix UI errors.
           </p>
         </div>
       </Tile>
