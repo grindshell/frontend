@@ -11,7 +11,7 @@
     "serve": "vite preview",
     "tauri": "tauri"
   },
-  "license": "MIT",
+  "license": "AGPL-3.0",
   "dependencies": {
     "solid-js": "^1.9.3",
     "@solidjs/router": "^0.15.4",
