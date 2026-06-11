@@ -172,6 +172,7 @@ export type SkillGrantView = {
  * per-stat minimums vs a unit's TRAINED levels (0 = none) — sent so the
  * client can preview equippability with the cheap stat check only. */
 export type GearView = {
+  /** Stable per-instance id (the backend `gear` table's autoincrement id). */
   instanceId: number;
   template: string;
   name: string;
