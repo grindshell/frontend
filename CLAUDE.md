@@ -139,8 +139,13 @@ the client's visual language.
 - **Layout** is `{ order: string[], sizes: Record<id, {col,row}> }`, held in a
   `createStore` and persisted to `localStorage` (`grindshell.overview.layout.v2`).
 - **Arrange mode** (header toggle) enables HTML5 drag-to-reorder (via a grip handle),
-  edge/corner **resize** handles, spacers, and reset. Outside arrange mode a card click
-  navigates to its route.
+  edge/corner **resize** handles, spacers, and reset. Reorder uses the **HTML5 drag-and-drop
+  API**, which WebView2 swallows unless `"dragDropEnabled": false` is set on the window in
+  [tauri.conf.json](src-tauri/tauri.conf.json) — without it, reorder works in the browser but
+  not in the Tauri app.
+- **Navigation is header-only**: outside arrange mode, clicking a card's **header** navigates to
+  its route (the header is the `role="button"` shortcut). The card **body is interactive** — its
+  own controls (inputs, rows, the map grid, the action starter) handle clicks and never navigate.
 - **Card registry**: [cards.tsx](src/pages/game/overview/cards.tsx) exports `CARDS` (id, title, route,
   default span, optional badge, `Body`). To add a card: append to `CARDS`.
 - **Tiers**: each card `Body` switches on `tier(span)` (micro/small/medium/large by area) via
@@ -148,14 +153,29 @@ the client's visual language.
   same way — don't early-return on a non-reactive read.
 - Card body data: the **Action, Inventory, Formation, Map, and Activity Log** cards render live
   state from the game context (`world.action` / `world.inventory` / `world.roster` /
-  `world.map` / `world.log`). The **Map** card shows a live 3×3 neighbourhood of the current
-  zone from `world.map` (the `mapView` push — it requests `listMap` when online, same as the
-  Area page; micro tier falls back to just the current zone, offline shows an empty state — no
-  invented biome/weather flavour). The **Activity Log** card auto-scrolls to the newest line
-  (`world.log` tail). The **Market · Buy / Sell** cards render the player's own resting orders
-  by side from `world.market.myOrders` (a buy is a bid, a sell an ask; best price first) — they
-  request `listMyOrders`/`listMarketGoods` when online, and show an empty state with no orders
-  or offline. Every Overview card is now live; no static placeholder card content remains.
+  `world.map` / `world.log`). Every Overview card is live; no static placeholder card content
+  remains. Card bodies are also **interactive**, each reusing its page's logic:
+  - **Current Action** — at the **large** tier embeds an inline starter (`ActionStarter`):
+    Combat/Travel tabs + a target `<select>` (+ KC for combat) + a **Start**/**Switch** button
+    (`changeAction` is an atomic stop-then-start, so the same call switches a running action). The
+    large **running** view is a **two-column** layout (live action + stats | accrued + starter) so
+    a wide-short large card (e.g. 6×3) fits without scrolling. Smaller tiers show the progress view.
+  - **Map** — a draggable mini-map on the shared `CellGrid` (`panMode`: drag to pan, click to
+    select), at small/medium/large. The **medium/large** tiers add a fixed-width **area-data panel**
+    for the selected (or current) zone — name (truncated, so a long name can't resize the grid),
+    x/y/z position, danger, and the player's banked **Knowledge** (`MapZoneInfo.knowledge`,
+    knowledge.md) — plus a **Travel** button when the selected tile is an adjacent destination
+    (`startTravel`). The **large** tier also adds Z up/down + **Recenter** controls (mirrors the
+    Area page). Requests `listMap` + `listDestinations`. micro = text fallback; offline → empty.
+  - **Activity Log** — auto-scrolls to the newest line (`world.log` tail) and, at medium/large,
+    carries the same MUD interaction input the Actions-page log has (`logLocal`; zone
+    interactions aren't served yet, so it echoes locally).
+  - **Market · Buy / Sell** — the player's own resting orders by side (`world.market.myOrders`,
+    a buy is a bid / a sell an ask, best price first; requests `listMyOrders`/`listMarketGoods`).
+    Clicking an order row deep-links to `/global-market?good=<id>` (the Market page reads the
+    `good` search param to preselect). Empty state with no orders / offline.
+  - **Formation** — clicking a unit row deep-links to `/formation?unit=<id>` (the Formation page
+    reads the `unit` search param to open that unit's detail inspector).
 
 ## 6. Data layer (server connection)
 

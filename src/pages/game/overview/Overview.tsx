@@ -141,7 +141,7 @@ function Card(props: {
         (a.isDropTarget(props.id) ? "border-primary " : "border-base-300 ") +
         (a.reorderOn
           ? "ring-1 ring-base-content/10 hover:ring-primary/50"
-          : "hover:border-base-content/30 cursor-pointer")
+          : "hover:border-base-content/30")
       }
       style={{ ...spanStyle(props.span), "container-type": "size" }}
       draggable={gripDraggable()}
@@ -154,11 +154,23 @@ function Card(props: {
         setGripDraggable(false);
         a.onDragEnd();
       }}
-      onClick={() => !a.reorderOn && props.onNavigate(props.route)}
-      role="button"
-      tabindex={0}
     >
-      <header class="flex items-center gap-2 px-3 py-2 border-b border-base-300/70 shrink-0">
+      {/* Only the header is the page shortcut — the body is interactive. */}
+      <header
+        class={
+          "flex items-center gap-2 px-3 py-2 border-b border-base-300/70 shrink-0 " +
+          (a.reorderOn ? "" : "cursor-pointer hover:bg-base-300/30")
+        }
+        role={a.reorderOn ? undefined : "button"}
+        tabindex={a.reorderOn ? undefined : 0}
+        onClick={() => !a.reorderOn && props.onNavigate(props.route)}
+        onKeyDown={(e) => {
+          if (!a.reorderOn && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            props.onNavigate(props.route);
+          }
+        }}
+      >
         <Show when={a.reorderOn}>
           <span
             class="text-base-content/50 hover:text-primary cursor-grab active:cursor-grabbing -ml-1 px-0.5 py-0.5"

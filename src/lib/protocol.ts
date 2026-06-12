@@ -202,6 +202,9 @@ export type MapZoneInfo = {
   name: string;
   danger: number;
   discovered: boolean;
+  /** The player's banked Knowledge of this zone (knowledge.md); 0 for a
+   * frontier zone or a discovered anchor with no banked Knowledge yet. */
+  knowledge: number;
 };
 
 /** The three numeric currencies (`CurrenciesView`, resources.md "Resource

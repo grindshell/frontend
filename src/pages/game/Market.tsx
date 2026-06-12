@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js";
+import { useSearchParams } from "@solidjs/router";
 import { useGame, type InventoryState } from "../../lib/game-context";
 import type { GoodInfo, OrderView } from "../../lib/protocol";
 import { Icon } from "../../components/Icon";
@@ -52,6 +53,7 @@ export function Market() {
   const market = () => game.world.market;
   const inv = () => game.world.inventory;
 
+  const [params] = useSearchParams();
   const [selected, setSelected] = createSignal<string | null>(null);
   const [side, setSide] = createSignal<"buy" | "sell">("buy");
   const [qty, setQty] = createSignal("");
@@ -64,6 +66,13 @@ export function Market() {
       game.listMarketGoods();
       game.listMyOrders();
     }
+  });
+
+  // A `?good=` query param (e.g. from an Overview market card) preselects that
+  // good once it's in the catalog — overriding the first-good default.
+  createEffect(() => {
+    const good = typeof params.good === "string" ? params.good : null;
+    if (good && market()?.goods.some((g) => g.id === good)) setSelected(good);
   });
 
   // Default the selection to the first good once the catalog arrives.

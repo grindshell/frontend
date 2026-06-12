@@ -1,4 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
+import { useSearchParams } from "@solidjs/router";
 import { useGame } from "../../lib/game-context";
 import type { FormationSlotView } from "../../lib/protocol";
 import CellGrid, { type CellGridItem } from "../../components/CellGrid";
@@ -22,10 +23,22 @@ type UnitViewMode = "table" | "detail";
 
 export function Formation() {
   const game = useGame();
+  const [params] = useSearchParams();
   const roster = () => game.world.roster ?? [];
   const [tab, setTab] = createSignal<Tab>("Units");
   const [unitView, setUnitView] = createSignal<UnitViewMode>("table");
   const [unitDetailId, setUnitDetailId] = createSignal("");
+
+  // A `?unit=` query param (e.g. from the Overview formation card) opens that
+  // unit's detail inspector directly, once it's in the roster.
+  createEffect(() => {
+    const unit = typeof params.unit === "string" ? params.unit : null;
+    if (unit && roster().some((u) => u.id === unit)) {
+      setUnitDetailId(unit);
+      setUnitView("detail");
+      setTab("Units");
+    }
+  });
 
   return (
     <section class="size-full flex flex-col" data-screen-label="Formation">

@@ -1,6 +1,18 @@
-import { For, Match, Show, Switch, createEffect, type JSX } from "solid-js";
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createSignal,
+  on,
+  type JSX,
+} from "solid-js";
+import { useNavigate } from "@solidjs/router";
 import { actionTarget, summarizeRewards, useGame } from "../../../lib/game-context";
-import type { MapZoneInfo } from "../../../lib/protocol";
+import type { Direction, MapZoneInfo } from "../../../lib/protocol";
+import CellGrid from "../../../components/CellGrid";
 
 // Overview cards — condensed views of the underlying game pages. Each body
 // receives a { col, row } span and adapts its density to the card's area.
@@ -66,6 +78,116 @@ const PHASE_LABEL: Record<string, string> = {
   resolution: "resolving",
 };
 
+// A compact action starter for the large Action card: tabs to pick the kind, a
+// dropdown of the zone's targets, and a Start/Switch button. Reuses the same
+// ops the Actions page does (listEnemies/startCombat, listDestinations/
+// startTravel). `changeAction` is an atomic stop-then-start, so the same call
+// starts when idle and switches when an action is already running. Only the two
+// live kinds (combat/travel) — Harvest/Craft have no server model yet.
+function ActionStarter() {
+  const game = useGame();
+  const [tab, setTab] = createSignal<"combat" | "travel">("combat");
+  const [enemyId, setEnemyId] = createSignal("");
+  const [kc, setKc] = createSignal("25");
+  const [dir, setDir] = createSignal("");
+
+  const enemies = () => game.world.enemies[game.world.zone] ?? [];
+  const dests = () => game.world.destinations[game.world.zone] ?? [];
+  const running = () => game.world.action != null;
+  const verb = () => (running() ? "Switch" : "Start");
+
+  // Fetch the active tab's list for this zone (cached per zone server-side).
+  createEffect(() => {
+    if (!game.online()) return;
+    if (tab() === "combat" && !game.world.enemies[game.world.zone]) game.listEnemies();
+    if (tab() === "travel" && !game.world.destinations[game.world.zone]) game.listDestinations();
+  });
+
+  const startCombat = () => {
+    const n = Math.max(1, Math.floor(Number(kc()) || 0));
+    const id = enemyId() || enemies()[0]?.id;
+    if (id && n >= 1) game.startCombat(id, n);
+  };
+  const startTravel = () => {
+    const d = (dir() || dests()[0]?.direction) as Direction | "";
+    if (d) game.startTravel(d as Direction);
+  };
+
+  return (
+    <div class="border-t border-base-300/60 pt-2 mt-1 flex flex-col gap-2 shrink-0">
+      <div class="flex items-center gap-2">
+        <div role="tablist" class="tabs tabs-box tabs-xs">
+          <button
+            role="tab"
+            class="tab"
+            classList={{ "tab-active": tab() === "combat" }}
+            onClick={() => setTab("combat")}
+          >
+            Combat
+          </button>
+          <button
+            role="tab"
+            class="tab"
+            classList={{ "tab-active": tab() === "travel" }}
+            onClick={() => setTab("travel")}
+          >
+            Travel
+          </button>
+        </div>
+        <span class="text-[10px] text-base-content/40">
+          {running() ? "switch the current action" : "start an action"}
+        </span>
+      </div>
+      <Switch>
+        <Match when={tab() === "combat"}>
+          <div class="flex items-end gap-2 flex-wrap">
+            <select
+              class="select select-xs grow min-w-0"
+              value={enemyId()}
+              onChange={(e) => setEnemyId(e.currentTarget.value)}
+            >
+              <option value="" disabled>
+                {enemies().length ? "Pick a target…" : "Scanning the zone…"}
+              </option>
+              <For each={enemies()}>{(en) => <option value={en.id}>{en.name}</option>}</For>
+            </select>
+            <input
+              type="number"
+              min="1"
+              class="input input-xs w-16"
+              title="Kill count"
+              value={kc()}
+              onInput={(e) => setKc(e.currentTarget.value)}
+            />
+            <button class="btn btn-xs btn-primary" disabled={!enemies().length} onClick={startCombat}>
+              {verb()}
+            </button>
+          </div>
+        </Match>
+        <Match when={tab() === "travel"}>
+          <div class="flex items-end gap-2 flex-wrap">
+            <select
+              class="select select-xs grow min-w-0"
+              value={dir()}
+              onChange={(e) => setDir(e.currentTarget.value)}
+            >
+              <option value="" disabled>
+                {dests().length ? "Pick a route…" : "Mapping routes…"}
+              </option>
+              <For each={dests()}>
+                {(d) => <option value={d.direction}>{DIR_LABEL[d.direction]} · {d.name}</option>}
+              </For>
+            </select>
+            <button class="btn btn-xs btn-primary" disabled={!dests().length} onClick={startTravel}>
+              {verb()}
+            </button>
+          </div>
+        </Match>
+      </Switch>
+    </div>
+  );
+}
+
 function ActionCard(props: { span: Span; }) {
   const game = useGame();
   const T = () => tier(props.span);
@@ -75,14 +197,29 @@ function ActionCard(props: { span: Span; }) {
     <Show
       when={action()}
       fallback={
-        <div class="h-full flex flex-col items-center justify-center text-center gap-1">
-          <div class="font-mono text-sm text-base-content/55 uppercase">idle</div>
-          <Show when={T() !== "micro"}>
-            <div class="text-[11px] text-base-content/40">
-              No action running — pick a target on the Actions page.
+        <Show
+          when={T() === "large"}
+          fallback={
+            <div class="h-full flex flex-col items-center justify-center text-center gap-1">
+              <div class="font-mono text-sm text-base-content/55 uppercase">idle</div>
+              <Show when={T() !== "micro"}>
+                <div class="text-[11px] text-base-content/40">
+                  No action running — pick a target on the Actions page.
+                </div>
+              </Show>
             </div>
-          </Show>
-        </div>
+          }
+        >
+          <div class="h-full flex flex-col">
+            <div class="flex-1 flex flex-col items-center justify-center text-center gap-1">
+              <div class="font-mono text-lg text-base-content/55 uppercase">idle</div>
+              <div class="text-[11px] text-base-content/40">
+                No action running — start one below.
+              </div>
+            </div>
+            <ActionStarter />
+          </div>
+        </Show>
       }
     >
       {(a) => (
@@ -122,44 +259,60 @@ function ActionCard(props: { span: Span; }) {
           </Match>
 
           <Match when={true}>
-            <div class="flex flex-col h-full gap-3">
-              <div class="flex items-baseline gap-2 flex-wrap">
-                <span class="font-mono text-2xl font-semibold tracking-tight uppercase">
-                  {a().kind}
-                </span>
-                <span class="text-xs text-base-content/50">vs {actionTarget(a())}</span>
-              </div>
-              <div class="space-y-1.5">
-                <div class="flex justify-between text-[11px] font-mono text-base-content/60">
-                  <span>kill count</span>
-                  <span>
-                    {a().kcDone} / {a().kcTarget}
-                  </span>
+            {/* At large the card is wide and short (e.g. 6×3), so the running
+                view lays out in two columns — live action on the left, accrued
+                rewards + the starter on the right — to fit without scrolling.
+                At medium it's a single column. */}
+            <div class="flex gap-4 h-full min-h-0 overflow-hidden">
+              <div class="flex-1 min-w-0 flex flex-col gap-2">
+                {/* The live action read-out grows to fill the column height so
+                    the stat tiles sit just below it instead of being pushed to
+                    the bottom with a dead gap (the card is wide and short). */}
+                <div class="flex-1 min-h-0 flex flex-col justify-center gap-2">
+                  <div class="flex items-baseline gap-2 flex-wrap">
+                    <span class="font-mono text-xl font-semibold tracking-tight uppercase leading-none">
+                      {a().kind}
+                    </span>
+                    <span class="text-xs text-base-content/50 truncate">vs {actionTarget(a())}</span>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="flex justify-between text-[11px] font-mono text-base-content/60">
+                      <span>kill count</span>
+                      <span>
+                        {a().kcDone} / {a().kcTarget}
+                      </span>
+                    </div>
+                    <progress
+                      class="progress progress-primary w-full h-1.5"
+                      value={a().kcDone}
+                      max={a().kcTarget}
+                    />
+                  </div>
                 </div>
-                <progress
-                  class="progress progress-primary w-full h-1.5"
-                  value={a().kcDone}
-                  max={a().kcTarget}
-                />
-              </div>
-              <div class="grid grid-cols-3 gap-2 mt-auto text-center">
-                <Stat
-                  label="formation hp"
-                  value={a().formationHp}
-                  sub={`/${a().formationMaxHp}`}
-                  tone={a().formationHp < a().formationMaxHp / 2 ? "warning" : undefined}
-                />
-                <Stat label="phase" value={PHASE_LABEL[a().phase] ?? a().phase} />
-                <Stat label="kills" value={a().tally.kills} />
+                <div class="grid grid-cols-3 gap-2 text-center">
+                  <Stat
+                    label="formation hp"
+                    value={a().formationHp}
+                    sub={`/${a().formationMaxHp}`}
+                    tone={a().formationHp < a().formationMaxHp / 2 ? "warning" : undefined}
+                    compact
+                  />
+                  <Stat label="phase" value={PHASE_LABEL[a().phase] ?? a().phase} compact />
+                  <Stat label="kills" value={a().tally.kills} compact />
+                </div>
               </div>
               <Show when={T() === "large"}>
-                <div class="border-t border-base-300/60 pt-3 mt-1 text-[11px]">
-                  <div class="text-[10px] uppercase tracking-wider text-base-content/45 mb-1">
-                    accrued (commits when the action ends)
+                <div class="flex-1 min-w-0 flex flex-col gap-2 min-h-0">
+                  <div class="text-[11px] flex-1 min-h-0 overflow-y-auto">
+                    <div class="text-[10px] uppercase tracking-wider text-base-content/45 mb-1">
+                      accrued (commits when the action ends)
+                    </div>
+                    <div class="font-mono text-base-content/75 leading-relaxed">
+                      {summarizeRewards(a().tally)}
+                    </div>
                   </div>
-                  <div class="font-mono text-base-content/75 leading-relaxed">
-                    {summarizeRewards(a().tally)}
-                  </div>
+                  {/* Switch the running action (atomic stop-then-start). */}
+                  <ActionStarter />
                 </div>
               </Show>
             </div>
@@ -171,13 +324,16 @@ function ActionCard(props: { span: Span; }) {
 }
 
 /* ---------- MAP ---------- */
-// A live 3x3 neighbourhood from the game context (`world.map`, the server's
-// `mapView` push — the same source the Area page renders): the current zone at
-// the centre plus its eight grid neighbours on the current Z-plane, north up.
-// Requests the map when online; offline / before the first push it shows a
-// compact empty state rather than invented zones (frontend CLAUDE.md §6). The
-// micro tier is too small for the grid, so it falls back to just the current
-// zone. Only wire-served fields are shown — no biome/weather/visited% flavour.
+// A live, draggable mini-map from the game context (`world.map`, the server's
+// `mapView` push — the same source/grid the Area page renders): a CellGrid
+// window on the current Z-plane, north up, that pans by dragging and selects a
+// zone on click. Requests the map + travel destinations when online; offline /
+// before the first push it shows a compact empty state rather than invented
+// zones (frontend CLAUDE.md §6). When there's room (medium/large) it shows an
+// area-data panel for the selected (or current) zone — name, x/y/z position,
+// danger, and the player's banked Knowledge — plus a Travel button for an
+// adjacent destination. The micro tier is too small for the grid, so it falls
+// back to just the current zone. Only wire-served fields are shown.
 
 type MapVec = { x: number; y: number; z: number; };
 const parseMapPos = (s: string): MapVec => {
@@ -185,58 +341,33 @@ const parseMapPos = (s: string): MapVec => {
   return { x, y, z };
 };
 
-/** Danger text tone for a neighbour's number (1 safe → 5 lethal). */
+/** Danger text tone (1 safe → 5 lethal). */
 const dangerTone = (d: number): string =>
   d <= 1 ? "text-base-content/70" : d <= 3 ? "text-warning" : "text-error";
 
-type MiniCellInfo = { zone: MapZoneInfo | null; isCurrent: boolean; };
+/** Compass labels for the Travel button. */
+const DIR_LABEL: Record<Direction, string> = {
+  north: "North",
+  south: "South",
+  east: "East",
+  west: "West",
+  up: "Up",
+  down: "Down",
+};
 
-function MiniCell(props: { cell: MiniCellInfo; }) {
-  const z = () => props.cell.zone;
-  const cur = () => props.cell.isCurrent;
-  return (
-    <div
-      class="rounded-sm flex items-center justify-center leading-none font-mono"
-      classList={{
-        "bg-primary text-primary-content font-bold": cur(),
-        "bg-base-300/70": !cur() && !!z() && z()!.discovered,
-        "border border-dashed border-base-content/40": !cur() && !!z() && !z()!.discovered,
-        "bg-base-300/15": !cur() && !z(),
-      }}
-    >
-      <Show when={cur()} fallback={<Show when={z()}>{(zz) => <span class={dangerTone(zz().danger)}>{zz().danger}</span>}</Show>}>
-        @
-      </Show>
-    </div>
-  );
-}
+/** A cell-grid item wrapping a map zone. Display y is the NEGATED world y so
+ *  north (+y) renders upward, the conventional map orientation. */
+type MapItem = { x: number; y: number; zone: MapZoneInfo; };
 
-/** The 3x3 grid itself — a square that scales to its column up to `cap`. */
-function MiniMap(props: { cells: MiniCellInfo[]; cap: string; fontClass: string; }) {
-  return (
-    <div
-      class={"grid grid-cols-3 grid-rows-3 gap-0.5 aspect-square mx-auto " + props.fontClass}
-      style={`width: min(100%, ${props.cap});`}
-    >
-      <For each={props.cells}>{(c) => <MiniCell cell={c} />}</For>
-    </div>
-  );
-}
+/** Viewport size of the card's mini-map, in cells. */
+const MAP_COLS = 5;
+const MAP_ROWS = 5;
 
 function MapEmpty() {
   return (
     <div class="h-full flex flex-col items-center justify-center text-center gap-1 text-base-content/45">
       <span class="font-mono text-base-content/30 tracking-widest">· · ·</span>
       <span class="text-[11px]">The map streams from the server.</span>
-    </div>
-  );
-}
-
-function Coord(props: { k: string; v: string; }) {
-  return (
-    <div class="flex justify-between gap-2 border-b border-base-300/60 pb-0.5">
-      <dt class="text-base-content/45 uppercase tracking-wider text-[10px] mt-0.5">{props.k}</dt>
-      <dd class="font-mono text-base-content/80 truncate">{props.v}</dd>
     </div>
   );
 }
@@ -248,32 +379,97 @@ function MapCard(props: { span: Span; }) {
   const currentKey = () => map()?.current ?? game.world.zone;
   const current = () => parseMapPos(currentKey());
   const currentZone = () => map()?.zones.find((z) => z.pos === currentKey()) ?? null;
-  const known = () => map()?.zones.filter((z) => z.discovered).length ?? 0;
+  const destinations = () => game.world.destinations[currentKey()] ?? [];
 
-  // Pull the map when connected — the connect-time push doesn't include it
-  // (listMap is on-demand). Tracks zone + online only, like the Area page.
-  createEffect(() => {
-    void game.world.zone;
-    if (game.online()) game.listMap();
-  });
+  const [viewZ, setViewZ] = createSignal(current().z);
+  const [offsetX, setOffsetX] = createSignal(current().x - Math.floor(MAP_COLS / 2));
+  const [offsetY, setOffsetY] = createSignal(-current().y - Math.floor(MAP_ROWS / 2));
+  const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
 
-  // The 3x3 window on the current Z-plane in display order (north up):
-  // rows dy = +1, 0, −1 · cols dx = −1, 0, +1.
-  const cells = (): MiniCellInfo[] => {
+  const recenter = () => {
     const c = current();
-    const m = map();
-    const out: MiniCellInfo[] = [];
-    for (const dy of [1, 0, -1]) {
-      for (const dx of [-1, 0, 1]) {
-        const key = `${c.x + dx},${c.y + dy},${c.z}`;
-        const zone = m?.zones.find((z) => z.pos === key) ?? null;
-        out.push({ zone, isCurrent: dx === 0 && dy === 0 });
-      }
-    }
-    return out;
+    setViewZ(c.z);
+    setOffsetX(c.x - Math.floor(MAP_COLS / 2));
+    setOffsetY(-c.y - Math.floor(MAP_ROWS / 2));
   };
 
-  const coordStr = () => `(${current().x}, ${current().y}, ${current().z})`;
+  // Pull the map + travel destinations when connected (both are on-demand, not
+  // in the connect-time push), tracking zone + online only — same as the Area
+  // page. A fresh zone recentres the viewport and clears any stale selection.
+  createEffect(() => {
+    void game.world.zone;
+    if (game.online()) {
+      game.listMap();
+      game.listDestinations();
+    }
+  });
+  createEffect(on(currentKey, () => {
+    recenter();
+    setSelectedKey(null);
+  }));
+
+  const items = createMemo<MapItem[]>(() => {
+    const m = map();
+    if (!m) return [];
+    return m.zones
+      .filter((z) => parseMapPos(z.pos).z === viewZ())
+      .map((z) => {
+        const p = parseMapPos(z.pos);
+        return { x: p.x, y: -p.y, zone: z };
+      });
+  });
+
+  const selectedZone = (): MapZoneInfo | null => {
+    const k = selectedKey();
+    return k ? (map()?.zones.find((z) => z.pos === k) ?? null) : null;
+  };
+  // The inspected zone's display position, only when on the plane in view.
+  const selectedPos = () => {
+    const z = selectedZone();
+    if (!z) return null;
+    const p = parseMapPos(z.pos);
+    if (p.z !== viewZ()) return null;
+    return { x: p.x, y: -p.y };
+  };
+  const destinationAt = (key: string) => destinations().find((d) => d.position === key);
+  const selDest = () => {
+    const z = selectedZone();
+    return z ? destinationAt(z.pos) : undefined;
+  };
+
+  // The zone the area-data panel describes: the selected one, or the current
+  // zone when nothing is selected. Its position drives the x/y/z readout.
+  const infoZone = (): MapZoneInfo | null => selectedZone() ?? currentZone();
+  const infoPos = () => parseMapPos(infoZone()?.pos ?? currentKey());
+  const statusLabel = () => {
+    const z = selectedZone();
+    if (!z) return "current zone";
+    if (z.pos === currentKey()) return "you are here";
+    return z.discovered ? "not adjacent" : "frontier";
+  };
+
+  const onCellClick = (absX: number, absY: number) => {
+    const key = `${absX},${-absY},${viewZ()}`;
+    const z = map()?.zones.find((zz) => zz.pos === key);
+    // Clicking only selects (empty space clears it) — travel fires from the
+    // Travel button, never the map click itself (matches the Area page).
+    setSelectedKey(z ? key : null);
+  };
+
+  const renderZone = (item: MapItem, container: HTMLDivElement) => {
+    const z = item.zone;
+    if (z.pos === currentKey()) {
+      container.classList.add("bg-primary", "text-primary-content", "font-semibold");
+    } else if (z.discovered) {
+      container.classList.add("bg-base-300", "text-base-content");
+    } else {
+      container.classList.add("bg-base-100", "text-base-content/60", "border", "border-dashed", "border-base-content/40");
+    }
+    const name = document.createElement("div");
+    name.className = "text-[0.55rem] font-medium leading-tight text-center overflow-hidden";
+    name.textContent = z.name;
+    container.appendChild(name);
+  };
 
   return (
     <Switch>
@@ -289,64 +485,118 @@ function MapCard(props: { span: Span; }) {
         </div>
       </Match>
 
-      <Match when={T() === "small"}>
-        <Show when={map()} fallback={<MapEmpty />}>
-          <div class="h-full flex flex-col justify-center gap-1.5">
-            <MiniMap cells={cells()} cap="6.5rem" fontClass="text-[10px]" />
-            <div class="text-[10px] font-mono text-base-content/55 flex justify-between gap-2">
-              <span class="truncate">{currentZone()?.name ?? "Unknown"}</span>
-              <span class="shrink-0">
-                ({current().x},{current().y})
-              </span>
-            </div>
-          </div>
-        </Show>
-      </Match>
-
-      <Match when={T() === "medium"}>
-        <Show when={map()} fallback={<MapEmpty />}>
-          <div class="flex h-full gap-3 items-center">
-            <div class="flex-1 min-w-0">
-              <MiniMap cells={cells()} cap="8.5rem" fontClass="text-xs" />
-            </div>
-            <dl class="text-[11px] space-y-1 w-28 shrink-0">
-              <Coord k="zone" v={currentZone()?.name ?? "Unknown"} />
-              <Coord k="coords" v={coordStr()} />
-              <Coord k="danger" v={currentZone() ? String(currentZone()!.danger) : "—"} />
-              <Coord k="known" v={`${known()} zones`} />
-            </dl>
-          </div>
-        </Show>
-      </Match>
-
       <Match when={true}>
         <Show when={map()} fallback={<MapEmpty />}>
-          <div class="flex h-full gap-4 items-center">
-            <div class="flex-1 min-w-0">
-              <MiniMap cells={cells()} cap="11rem" fontClass="text-sm" />
+          <div class="h-full flex flex-row gap-1.5 min-h-0">
+            {/* Draggable tile grid: `panMode` so a left-drag anywhere pans, a
+                click selects (the same shared CellGrid the Area map uses). */}
+            <div class="flex-1 min-h-0 min-w-0 rounded bg-base-200/40 overflow-hidden">
+              <CellGrid
+                items={items()}
+                cols={MAP_COLS}
+                rows={MAP_ROWS}
+                offsetX={offsetX()}
+                offsetY={offsetY()}
+                minCellPx={18}
+                onCellClick={onCellClick}
+                onPan={(x, y) => {
+                  setOffsetX(x);
+                  setOffsetY(y);
+                }}
+                selectedPos={selectedPos()}
+                renderItem={renderZone}
+                panMode
+              />
             </div>
-            <div class="w-40 shrink-0 flex flex-col gap-2">
-              <dl class="text-[11px] space-y-1">
-                <Coord k="zone" v={currentZone()?.name ?? "Unknown"} />
-                <Coord k="coords" v={coordStr()} />
-                <Coord k="danger" v={currentZone() ? String(currentZone()!.danger) : "—"} />
-                <Coord k="known" v={`${known()} discovered`} />
-              </dl>
-              <div class="border-t border-base-300/60 pt-2 mt-1 text-[11px] space-y-1">
-                <div class="text-[10px] uppercase tracking-wider text-base-content/45">legend</div>
-                <div class="flex items-center gap-2">
-                  <span class="text-primary font-mono">@</span> <span>you</span>
+
+            {/* Area-data panel — only when there's room (medium/large). The
+                small tier just pans/selects. Describes the selected zone, or
+                the current one when nothing is selected. The width is FIXED
+                (with a truncated name) so a long/short zone name can't resize
+                the grid column — keeping the map grid stable on selection. */}
+            <Show when={T() !== "small"}>
+              <div class="w-28 shrink-0 min-w-0 flex flex-col gap-1 text-[11px] px-0.5">
+                {/* <div class="flex items-center gap-2">
+                  <span class="truncate font-medium text-base-content/80">
+                    {infoZone()?.name ?? "Unknown"}
+                  </span>
+                  <Show
+                    when={selDest()}
+                    fallback={
+                      <span class="ml-auto shrink-0 text-[9px] uppercase tracking-wider text-base-content/40">
+                        {statusLabel()}
+                      </span>
+                    }
+                  >
+                    {(d) => (
+                      <button
+                        class="btn btn-xs btn-primary ml-auto shrink-0"
+                        onClick={() => game.startTravel(d().direction)}
+                      >
+                        Travel {DIR_LABEL[d().direction].toLowerCase()} →
+                      </button>
+                    )}
+                  </Show>
+                </div> */}
+                <span class="truncate font-medium text-base-content/80">
+                  {infoZone()?.name ?? "Unknown"}
+                </span>
+                <Show
+                  when={selDest()}
+                  fallback={
+                    <span class="shrink-0 text-[9px] uppercase tracking-wider text-base-content/40">
+                      {statusLabel()}
+                    </span>
+                  }
+                >
+                  {(d) => (
+                    <button
+                      class="btn btn-xs btn-primary shrink-0"
+                      onClick={() => game.startTravel(d().direction)}
+                    >
+                      Travel {DIR_LABEL[d().direction].toLowerCase()} →
+                    </button>
+                  )}
+                </Show>
+                <div class="flex flex-col gap-3 font-mono text-base-content/60">
+                  <span title="position">
+                    ({infoPos().x}, {infoPos().y}, {infoPos().z})
+                  </span>
+                  <span title="danger" class={dangerTone(infoZone()?.danger ?? 0)}>
+                    ⚠ {infoZone()?.danger ?? "—"}
+                  </span>
+                  <span title="zone knowledge">🧭 {infoZone()?.knowledge ?? 0}</span>
                 </div>
-                <div class="flex items-center gap-2">
-                  <span class="inline-block size-3 rounded-sm bg-base-300/70" />{" "}
-                  <span>discovered (danger #)</span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="inline-block size-3 rounded-sm border border-dashed border-base-content/40" />{" "}
-                  <span>frontier</span>
-                </div>
+                {/* Z-level + recenter controls — only at the large tier, where
+                    there's room. Mirrors the Area page's map controls. */}
+                <Show when={T() === "large"}>
+                  <div class="mt-auto flex flex-col gap-1 pt-1">
+                    <div class="join self-start">
+                      <button
+                        class="btn btn-xs join-item"
+                        title="Up a level (+z)"
+                        onClick={() => setViewZ((v) => v + 1)}
+                      >
+                        ▲
+                      </button>
+                      <span class="btn btn-xs join-item no-animation pointer-events-none font-mono px-1.5">
+                        z{viewZ()}
+                      </span>
+                      <button
+                        class="btn btn-xs join-item"
+                        title="Down a level (−z)"
+                        onClick={() => setViewZ((v) => v - 1)}
+                      >
+                        ▼
+                      </button>
+                    </div>
+                    <button class="btn btn-xs btn-ghost self-start" onClick={recenter}>
+                      Recenter
+                    </button>
+                  </div>
+                </Show>
               </div>
-            </div>
+            </Show>
           </div>
         </Show>
       </Match>
@@ -472,13 +722,16 @@ function InventoryCard(props: { span: Span; }) {
 // all-goods public book on the wire, so the Overview condenses what is server-
 // served without a selected good: the player's open orders. Best = highest bid
 // / lowest ask. Offline or before the first push → an empty state.
-type OrderRow = { name: string; price: number; qty: number; };
+type OrderRow = { good: string; name: string; price: number; qty: number; };
 
 function MarketOrdersCard(props: { span: Span; side: "buy" | "sell"; }) {
   const game = useGame();
+  const navigate = useNavigate();
   const T = () => tier(props.span);
   const tone = () => (props.side === "buy" ? "text-success" : "text-warning");
   const arrow = () => (props.side === "buy" ? "↓" : "↑");
+  // Clicking an order opens the Market page with that good pre-selected.
+  const openGood = (good: string) => navigate(`/global-market?good=${encodeURIComponent(good)}`);
 
   // Pull the goods catalog (for names) and the player's orders when online. Both
   // are idempotent reads; tracking only `online()` / the catalog length keeps
@@ -496,7 +749,7 @@ function MarketOrdersCard(props: { span: Span; side: "buy" | "sell"; }) {
   const rows = (): OrderRow[] => {
     const orders = (game.world.market?.myOrders ?? []).filter((o) => o.side === props.side);
     orders.sort((a, b) => (props.side === "buy" ? b.price - a.price : a.price - b.price));
-    return orders.map((o) => ({ name: goodName(o.good), price: o.price, qty: o.qty }));
+    return orders.map((o) => ({ good: o.good, name: goodName(o.good), price: o.price, qty: o.qty }));
   };
 
   const noun = () => (props.side === "buy" ? "bids" : "asks");
@@ -537,12 +790,18 @@ function MarketOrdersCard(props: { span: Span; side: "buy" | "sell"; }) {
             <ul class="h-full text-[11px] divide-y divide-base-300/40 font-mono overflow-hidden">
               <For each={rows().slice(0, 4)}>
                 {(r) => (
-                  <li class="flex justify-between py-0.5">
-                    <span class="truncate">{r.name}</span>
-                    <span class={tone()}>
-                      {arrow()}
-                      {r.price}
-                    </span>
+                  <li>
+                    <button
+                      class="w-full flex justify-between py-0.5 hover:bg-base-300/40 rounded px-1 -mx-1"
+                      title={`Trade ${r.name} on the market`}
+                      onClick={() => openGood(r.good)}
+                    >
+                      <span class="truncate">{r.name}</span>
+                      <span class={tone()}>
+                        {arrow()}
+                        {r.price}
+                      </span>
+                    </button>
                   </li>
                 )}
               </For>
@@ -561,18 +820,24 @@ function MarketOrdersCard(props: { span: Span; side: "buy" | "sell"; }) {
               <ul class="text-sm divide-y divide-base-300/40 overflow-y-auto flex-1 -mx-1 px-1">
                 <For each={rows()}>
                   {(r) => (
-                    <li class="flex items-baseline justify-between py-1">
-                      <span class="truncate">{r.name}</span>
-                      <span class="flex items-baseline gap-4 font-mono shrink-0">
-                        <span class={tone()}>
-                          {arrow()}
-                          {r.price}
-                          <span class="text-base-content/40 text-xs">cr</span>
+                    <li>
+                      <button
+                        class="w-full flex items-baseline justify-between py-1 hover:bg-base-300/40 rounded px-1 -mx-1 text-left"
+                        title={`Trade ${r.name} on the market`}
+                        onClick={() => openGood(r.good)}
+                      >
+                        <span class="truncate">{r.name}</span>
+                        <span class="flex items-baseline gap-4 font-mono shrink-0">
+                          <span class={tone()}>
+                            {arrow()}
+                            {r.price}
+                            <span class="text-base-content/40 text-xs">cr</span>
+                          </span>
+                          <span class="w-12 text-right text-base-content/70">
+                            {r.qty.toLocaleString()}
+                          </span>
                         </span>
-                        <span class="w-12 text-right text-base-content/70">
-                          {r.qty.toLocaleString()}
-                        </span>
-                      </span>
+                      </button>
                     </li>
                   )}
                 </For>
@@ -609,9 +874,12 @@ const ROSTER_STAT_KEYS = [
 
 function FormationCard(props: { span: Span; }) {
   const game = useGame();
+  const navigate = useNavigate();
   const T = () => tier(props.span);
   const units = () => game.world.roster ?? [];
   const placedCount = () => game.world.formation?.length ?? 0;
+  // Clicking a unit opens the Formation page on that unit's detail inspector.
+  const openUnit = (id: string) => navigate(`/formation?unit=${encodeURIComponent(id)}`);
 
   return (
     <Switch>
@@ -633,12 +901,18 @@ function FormationCard(props: { span: Span; }) {
             }
           >
             {(u) => (
-              <li class="flex items-center gap-2">
-                <span class="truncate flex-1">{u.name}</span>
-                <Show when={u.isPlayer}>
-                  <span class="text-[9px] uppercase tracking-wider text-base-content/40">you</span>
-                </Show>
-                <span class="font-mono text-base-content/60">VIT {u.effective.vit}</span>
+              <li>
+                <button
+                  class="w-full flex items-center gap-2 hover:bg-base-300/40 rounded px-1 -mx-1"
+                  title={`Inspect ${u.name}`}
+                  onClick={() => openUnit(u.id)}
+                >
+                  <span class="truncate flex-1 text-left">{u.name}</span>
+                  <Show when={u.isPlayer}>
+                    <span class="text-[9px] uppercase tracking-wider text-base-content/40">you</span>
+                  </Show>
+                  <span class="font-mono text-base-content/60">VIT {u.effective.vit}</span>
+                </button>
               </li>
             )}
           </For>
@@ -663,33 +937,39 @@ function FormationCard(props: { span: Span; }) {
               }
             >
               {(u) => (
-                <li class="py-1.5">
-                  <div class="flex items-baseline gap-2">
-                    <span class="truncate min-w-0">{u.name}</span>
-                    <Show when={u.isPlayer}>
-                      <span class="badge badge-xs badge-soft">player</span>
-                    </Show>
-                    <Show when={u.equipment.length > 0}>
-                      <span class="ml-auto text-[10px] text-base-content/45 shrink-0">
-                        {u.equipment.length} equipped
-                      </span>
-                    </Show>
-                  </div>
-                  <div class="font-mono text-[10px] text-base-content/55 mt-0.5">
-                    <For
-                      each={
-                        T() === "large"
-                          ? [...ROSTER_STAT_KEYS]
-                          : [...ROSTER_STAT_KEYS].slice(0, 2)
-                      }
-                    >
-                      {([k, label]) => (
-                        <span class="mr-2">
-                          {label} {u.effective[k]}
+                <li>
+                  <button
+                    class="w-full text-left py-1.5 hover:bg-base-300/40 rounded px-1 -mx-1"
+                    title={`Inspect ${u.name}`}
+                    onClick={() => openUnit(u.id)}
+                  >
+                    <div class="flex items-baseline gap-2">
+                      <span class="truncate min-w-0">{u.name}</span>
+                      <Show when={u.isPlayer}>
+                        <span class="badge badge-xs badge-soft">player</span>
+                      </Show>
+                      <Show when={u.equipment.length > 0}>
+                        <span class="ml-auto text-[10px] text-base-content/45 shrink-0">
+                          {u.equipment.length} equipped
                         </span>
-                      )}
-                    </For>
-                  </div>
+                      </Show>
+                    </div>
+                    <div class="font-mono text-[10px] text-base-content/55 mt-0.5">
+                      <For
+                        each={
+                          T() === "large"
+                            ? [...ROSTER_STAT_KEYS]
+                            : [...ROSTER_STAT_KEYS].slice(0, 2)
+                        }
+                      >
+                        {([k, label]) => (
+                          <span class="mr-2">
+                            {label} {u.effective[k]}
+                          </span>
+                        )}
+                      </For>
+                    </div>
+                  </button>
                 </li>
               )}
             </For>
@@ -723,6 +1003,7 @@ function LogCard(props: { span: Span; }) {
   const T = () => tier(props.span);
   const tail = (n: number) => game.world.log.slice(-n);
   const latest = () => game.world.log[game.world.log.length - 1];
+  const [input, setInput] = createSignal("");
 
   // Keep the newest line in view: scroll the list to the bottom whenever a line
   // arrives (and on a tier change that (re)mounts the list).
@@ -732,6 +1013,17 @@ function LogCard(props: { span: Span; }) {
     T();
     if (listEl) listEl.scrollTop = listEl.scrollHeight;
   });
+
+  // The MUD-interaction surface, same as the Actions-page log (Actions.tsx):
+  // zone interactions aren't served yet, so it echoes locally for now.
+  const submit = (e: Event) => {
+    e.preventDefault();
+    const cmd = input().trim();
+    if (!cmd) return;
+    setInput("");
+    game.logLocal(`> ${cmd}`);
+    game.logLocal("Nothing answers. (Zone interactions are not available yet.)");
+  };
 
   return (
     <Switch>
@@ -747,32 +1039,54 @@ function LogCard(props: { span: Span; }) {
       </Match>
 
       <Match when={true}>
-        <ul
-          ref={listEl}
-          class="font-mono h-full overflow-y-auto"
-          style={{
-            "font-size": T() === "small" ? "11px" : "12px",
-            "line-height": "1.55",
-          }}
-        >
-          <For
-            each={tail(T() === "small" ? 4 : 50)}
-            fallback={<li class="text-base-content/35">— the log is quiet —</li>}
+        <div class="h-full flex flex-col gap-1.5 min-h-0">
+          <ul
+            ref={listEl}
+            class="font-mono flex-1 min-h-0 overflow-y-auto"
+            style={{
+              "font-size": T() === "small" ? "11px" : "12px",
+              "line-height": "1.55",
+            }}
           >
-            {(l) => (
-              <li class="flex gap-2 py-0.5">
-                <Show when={T() !== "small"}>
-                  <span class={"shrink-0 uppercase text-[10px] mt-[2px] w-12 " + (LOG_TAG[l.kind] ?? "")}>
-                    {l.kind}
+            <For
+              each={tail(T() === "small" ? 4 : 50)}
+              fallback={<li class="text-base-content/35">— the log is quiet —</li>}
+            >
+              {(l) => (
+                <li class="flex gap-2 py-0.5">
+                  <Show when={T() !== "small"}>
+                    <span class={"shrink-0 uppercase text-[10px] mt-[2px] w-12 " + (LOG_TAG[l.kind] ?? "")}>
+                      {l.kind}
+                    </span>
+                  </Show>
+                  <span class={"truncate " + (LOG_TAG[l.kind] ?? "text-base-content/85")}>
+                    {l.text}
                   </span>
-                </Show>
-                <span class={"truncate " + (LOG_TAG[l.kind] ?? "text-base-content/85")}>
-                  {l.text}
-                </span>
-              </li>
-            )}
-          </For>
-        </ul>
+                </li>
+              )}
+            </For>
+          </ul>
+          {/* The interaction input — only where there's room (medium/large). */}
+          <Show when={T() !== "small"}>
+            <form class="flex gap-1.5 shrink-0" onSubmit={submit}>
+              <input
+                type="text"
+                placeholder="Interact with the zone…"
+                class="input input-xs grow"
+                value={input()}
+                onInput={(e) => setInput(e.currentTarget.value)}
+              />
+              <button
+                type="submit"
+                class="btn btn-xs"
+                classList={{ "btn-success": input().trim().length > 0 }}
+                disabled={input().trim().length === 0}
+              >
+                Send
+              </button>
+            </form>
+          </Show>
+        </div>
       </Match>
     </Switch>
   );
