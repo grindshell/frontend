@@ -193,6 +193,14 @@ serves **today**:
   subprotocols — `grindshell.auth.<token>` and a per-attempt `<nonce>`. The server echoes the
   nonce as the selected subprotocol; the client **verifies the echo and severs on mismatch**
   (accounts.md anti-hijack). Auto-reconnect with backoff.
+- **Read-request throttle** (game-context `sendRead`): informational requests (`listMap`,
+  `listEnemies`, `listDestinations`, the market reads, gear/mod-log pages, …) are de-duplicated
+  for 10s, keyed by request identity *including* the args that change the answer (zone, good,
+  page) — rapid sidebar switching re-renders from the already-held store instead of burning the
+  server's per-connection inbound budget (`WS_INBOUND_RATE_LIMIT_MAX`). Single-slot stores that
+  keep only the latest answer (the market book, the gear page) pass a `holds` check so a request
+  whose answer was overwritten is **never** suppressed. Mutations are never throttled; stamps
+  clear on disconnect. Route new read ops through `sendRead`, mutations through `send`.
 - **Chat**: send/join/leave/create rooms, DMs, moderation (`ClientData`); receive
   `chatRoomMsg` / `chatDm` / `chatSystem` / `ack` / `nack` (`ServerMessage`). The context
   normalizes these into per-room `ChatEntry[]` the ChatPanel renders. Built-in rooms

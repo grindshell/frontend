@@ -20,6 +20,7 @@ import {
   createSignal,
   onCleanup,
   onMount,
+  untrack,
   useContext,
   type ParentProps,
 } from "solid-js";
@@ -418,6 +419,28 @@ export function GameProvider(props: ParentProps) {
     const ok = conn.send({ nonce: n, data });
     if (ok && p) pending.set(n, p);
     return ok;
+  };
+
+  // Read-request throttle. Informational (non-mutating) requests are answered
+  // by authoritative pushes the stores already hold, so re-sending an
+  // identical one moments later can't change what renders — it only burns the
+  // connection's inbound rate budget (the server drops frames, chat included,
+  // past WS_INBOUND_RATE_LIMIT_MAX). Rapid sidebar switching (Overview ↔ Area
+  // ↔ Market ↔ …) re-fires the same mount-time reads; within the window the
+  // already-held answer stands in. Keys carry whatever makes the answer
+  // differ (the zone, the good, the page), so e.g. arriving in a new zone
+  // always sends. `holds` covers single-slot stores that keep only the LATEST
+  // answer (the market book, the gear page): when the slot has since been
+  // overwritten by a different answer, the cached one is gone and the request
+  // must go out regardless of the window. Mutations never come through here.
+  const READ_TTL_MS = 10_000;
+  const recentReads = new Map<string, number>();
+  const sendRead = (key: string, data: ClientData, holds: () => boolean = () => true) => {
+    const now = Date.now();
+    const last = recentReads.get(key);
+    if (last != null && now - last < READ_TTL_MS && holds()) return;
+    for (const [k, t] of recentReads) if (now - t >= READ_TTL_MS) recentReads.delete(k);
+    if (send(data)) recentReads.set(key, now);
   };
 
   /* ---- inbound handling ---- */
@@ -850,12 +873,20 @@ export function GameProvider(props: ParentProps) {
 
   const requestModLog = (page: number) => {
     if (!online()) return;
-    send({ t: "chat", ct: "modLog", page: Math.max(0, Math.floor(page)) });
+    // A read with a single-page slot, like the gear page: throttled, yielding
+    // when a different page has since landed.
+    const p = Math.max(0, Math.floor(page));
+    untrack(() =>
+      sendRead(`modLog:${p}`, { t: "chat", ct: "modLog", page: p }, () => world.modLog?.page === p),
+    );
   };
 
   const requestModReports = (page: number) => {
     if (!online()) return;
-    send({ t: "chat", ct: "modReports", page: Math.max(0, Math.floor(page)) });
+    const p = Math.max(0, Math.floor(page));
+    untrack(() =>
+      sendRead(`modReports:${p}`, { t: "chat", ct: "modReports", page: p }, () => world.modReports?.page === p),
+    );
   };
 
   const resolveReport = (
@@ -882,7 +913,9 @@ export function GameProvider(props: ParentProps) {
 
   const listModerators = () => {
     if (!online()) return;
-    send({ t: "adminCmd", tt: "listModerators" });
+    untrack(() =>
+      sendRead("listModerators", { t: "adminCmd", tt: "listModerators" }, () => world.moderators != null),
+    );
   };
 
   /** Ask the server for a full state refresh (top-level control message,
@@ -897,19 +930,33 @@ export function GameProvider(props: ParentProps) {
 
   /* ---- game / idle-action methods ---- */
 
+  // The reads below go through the sendRead throttle, with their store reads
+  // untracked so calling one inside an effect adds no dependencies the caller
+  // didn't opt into.
+
   const listEnemies = () => {
     if (!online()) return;
-    send({ t: "game", gt: "listEnemies" });
+    untrack(() =>
+      sendRead(`listEnemies:${world.zone}`, { t: "game", gt: "listEnemies" }, () => !!world.enemies[world.zone]),
+    );
   };
 
   const listDestinations = () => {
     if (!online()) return;
-    send({ t: "game", gt: "listDestinations" });
+    untrack(() =>
+      sendRead(
+        `listDestinations:${world.zone}`,
+        { t: "game", gt: "listDestinations" },
+        () => !!world.destinations[world.zone],
+      ),
+    );
   };
 
   const listMap = () => {
     if (!online()) return;
-    send({ t: "game", gt: "listMap" });
+    untrack(() =>
+      sendRead(`listMap:${world.zone}`, { t: "game", gt: "listMap" }, () => world.map?.current === world.zone),
+    );
   };
 
   const startCombat = (enemyId: string, kc: number) => {
@@ -972,8 +1019,13 @@ export function GameProvider(props: ParentProps) {
   const requestGearPage = (page: number) => {
     if (!online()) return;
     // The server clamps and answers with a fresh inventory push; like
-    // listEnemies this is a read, so there is no ack to correlate.
-    send({ t: "game", gt: "gearPage", page: Math.max(0, Math.floor(page)) });
+    // listEnemies this is a read, so there is no ack to correlate. The
+    // snapshot carries only one page, so the throttle yields whenever a
+    // different page has since landed.
+    const p = Math.max(0, Math.floor(page));
+    untrack(() =>
+      sendRead(`gearPage:${p}`, { t: "game", gt: "gearPage", page: p }, () => world.inventory?.gearPage === p),
+    );
   };
 
   const useConsumable = (item: string, onError?: (reason?: string) => void) => {
@@ -1015,17 +1067,26 @@ export function GameProvider(props: ParentProps) {
 
   const listMarketGoods = () => {
     if (!online()) return;
-    send({ t: "game", gt: "listMarketGoods" });
+    // The catalog is fixed for a build, so the held answer never goes stale.
+    untrack(() =>
+      sendRead("listMarketGoods", { t: "game", gt: "listMarketGoods" }, () => !!world.market?.goods.length),
+    );
   };
 
   const viewMarket = (good: string) => {
     if (!online()) return;
-    send({ t: "game", gt: "viewMarket", good });
+    // The book slot holds one good at a time; selecting A → B → A back within
+    // the window must re-request (B overwrote A's book).
+    untrack(() =>
+      sendRead(`viewMarket:${good}`, { t: "game", gt: "viewMarket", good }, () => world.market?.book?.good === good),
+    );
   };
 
   const listMyOrders = () => {
     if (!online()) return;
-    send({ t: "game", gt: "listMyOrders" });
+    // No parameters, so the held order list can't be overwritten by a
+    // different answer — and every market mutation acks with a fresh one.
+    untrack(() => sendRead("listMyOrders", { t: "game", gt: "listMyOrders" }));
   };
 
   const placeBuyOrder = (good: string, qty: number, price: number, onError?: (reason?: string) => void) => {
@@ -1104,7 +1165,13 @@ export function GameProvider(props: ParentProps) {
           setStatus(s);
           // In-flight request handlers can't resolve across a reconnect; the
           // connect-time chatState push re-baselines the room state instead.
-          if (s !== "connected") pending.clear();
+          // Throttle stamps are dropped too, so the pages' online-tracking
+          // effects can refresh request-answered slices the connect-time push
+          // doesn't carry (map, destinations, market).
+          if (s !== "connected") {
+            pending.clear();
+            recentReads.clear();
+          }
         },
         onMessage,
         onHandshakeFailure: (consecutive) => {
