@@ -33,6 +33,20 @@ export type RoomRole = "admin" | "moderator" | "user" | "muted" | "banned";
  * cardinal axes a travel action can move along. */
 export type Direction = "north" | "south" | "east" | "west" | "up" | "down";
 
+/**
+ * The pre-login status payload from `GET /api/status` (backend
+ * `StatusResponse` in crates/server/src/state.rs; design: server-status.md).
+ * An unauthenticated, coarsely-cached bundle shown on the login screen.
+ */
+export type ServerStatus = {
+  /** The current message of the day; empty string when none is set. */
+  motd: string;
+  /** ISO-8601 timestamp of the last MOTD change, or null when no MOTD is set. */
+  motdUpdatedAt: string | null;
+  /** Unique accounts connected to chat (coarse, ~15-min cached). */
+  playersOnline: number;
+};
+
 /* ------------------------------------------------------------------ */
 /* Client → server                                                    */
 /* ------------------------------------------------------------------ */
@@ -148,6 +162,10 @@ export type GameData =
 export type ClientData =
   | ({ t: "chat" } & ChatData)
   | ({ t: "game" } & GameData)
+  // A client-originated admin command, gated server-side against the `sudoers`
+  // designation (server-status.md "Admin commands"). A non-designated requestor
+  // is disconnected, so the client only surfaces these to admins (`world.isAdmin`).
+  | { t: "adminCmd"; tt: "setMotd"; body: string }
   | { t: "requestState" };
 
 /** The full client → server envelope (`Message`). `nonce` correlates Ack/Nack. */
@@ -461,6 +479,10 @@ export type ServerMessage =
   | { t: "chatRoomMsg"; room: string; messageId: number; from: string; body: string; sentAt: string }
   | { t: "chatDm"; messageId: number; from: string; body: string; sentAt: string }
   | { t: "chatSystem"; room: string; body: string }
+  // Whether this connection's account is a designated admin (server-status.md
+  // "Admin commands"). Pushed once at connect; a UI hint for showing the admin
+  // surface (the server re-checks the sudoers designation on every command).
+  | { t: "adminStatus"; isAdmin: boolean }
   // The chat half of the connect-time state push (accounts.md "State
   // synchronization"): the authoritative set of rooms this connection is
   // subscribed to. Sent on every (re)connect and in reply to `requestState`.

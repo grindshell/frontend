@@ -192,6 +192,11 @@ type WorldState = {
   /** Active formation-scoped Zone Effects (the `effects` push); authoritative,
    * replaced wholesale. Empty until the first push. */
   effects: EffectView[];
+  /** Whether this connection's account is a designated admin (the `adminStatus`
+   * push, server-status.md). UI hint for showing the admin surface; the server
+   * re-checks the sudoers designation on every command. False until pushed /
+   * offline. */
+  isAdmin: boolean;
   lastRewards: RewardReport | null;
   /** The last combat request, for quick restart. */
   lastCombat: { enemy: string; kc: number } | null;
@@ -244,6 +249,14 @@ export type Game = {
    * `formation` snapshot or nacks with the reason (`onError`). Nothing is
    * applied optimistically. */
   setFormation: (slots: FormationSlotView[], onError?: (reason?: string) => void) => void;
+  /** Set the message of the day (an admin command, server-status.md). Gated
+   * server-side against the `sudoers` designation; a non-admin sender is
+   * disconnected, so only surface this when `world.isAdmin`. `onSuccess` fires
+   * on the ack, `onError` on a nack. */
+  setMotd: (
+    body: string,
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+  ) => void;
   /** Request the global-market goods catalog (answered by `marketGoods`). */
   listMarketGoods: () => void;
   /** Request one good's order book (answered by `marketBook`). */
@@ -289,6 +302,7 @@ export function GameProvider(props: ParentProps) {
     roster: null,
     formation: null,
     effects: [],
+    isAdmin: false,
     lastRewards: null,
     lastCombat: null,
     lastTravel: null,
@@ -407,6 +421,10 @@ export function GameProvider(props: ParentProps) {
       case "formation":
         // Authoritative snapshot: replace the layout.
         setWorld("formation", msg.slots);
+        break;
+      case "adminStatus":
+        // Connect-time admin designation (server-status.md). A UI hint only.
+        setWorld("isAdmin", msg.isAdmin);
         break;
       case "marketGoods":
         // The goods catalog — fixed for a build. Seed/replace the market slice,
@@ -750,6 +768,23 @@ export function GameProvider(props: ParentProps) {
     send({ t: "game", gt: "setFormation", slots }, { onNack: onError });
   };
 
+  const setMotd = (
+    body: string,
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+  ) => {
+    if (!online()) {
+      handlers?.onError?.("offline — admin commands need a server connection");
+      return;
+    }
+    // Gated server-side against the sudoers designation; acks on success, nacks
+    // on a server error. A non-admin sender is disconnected (the UI only shows
+    // this to admins, so that path is for forged frames).
+    send(
+      { t: "adminCmd", tt: "setMotd", body },
+      { onAck: handlers?.onSuccess, onNack: handlers?.onError },
+    );
+  };
+
   const listMarketGoods = () => {
     if (!online()) return;
     send({ t: "game", gt: "listMarketGoods" });
@@ -887,6 +922,7 @@ export function GameProvider(props: ParentProps) {
     requestGearPage,
     useConsumable,
     setFormation,
+    setMotd,
     listMarketGoods,
     viewMarket,
     listMyOrders,

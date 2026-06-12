@@ -1,4 +1,4 @@
-import { Match, Show, Switch, createMemo, createSignal, type JSX } from "solid-js";
+import { Match, Show, Switch, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { CFTurnstile } from "../components/CFTurnstile";
 import { TextInput } from "../components/TextInput";
 import { GdprConsent } from "../components/GdprConsent";
@@ -52,6 +52,11 @@ export function LoginRegister() {
 }
 
 function Descriptor() {
+  // The pre-login status surface (server-status.md). Only fetched when the
+  // client is actually talking to a backend — offline UI-dev mode makes no
+  // network calls, so the source stays falsy and the resource never runs.
+  const [status] = createResource(() => !config.uiDev, api.fetchStatus);
+
   return (
     <div class="hero min-h-full rounded-l-xl bg-base-300">
       <div class="hero-content py-12 text-center">
@@ -61,6 +66,28 @@ function Descriptor() {
             A world fractured and society lost under the ruins of before. Lead your group of
             explorers to find what's left.
           </p>
+
+          <Show when={status()}>
+            {(s) => (
+              <div class="mt-10 text-left">
+                <Show when={s().motd}>
+                  <div class="text-[11px] uppercase tracking-wide text-base-content/40">
+                    Message of the day
+                  </div>
+                  <p class="mt-1 text-sm text-base-content/70 leading-relaxed whitespace-pre-line">
+                    {s().motd}
+                  </p>
+                </Show>
+                <div
+                  class="flex items-center justify-center gap-2 text-sm text-base-content/60"
+                  classList={{ "mt-4": !!s().motd }}
+                >
+                  <span class="inline-block w-2 h-2 rounded-full bg-success" />
+                  {s().playersOnline} {s().playersOnline === 1 ? "player" : "players"} online
+                </div>
+              </div>
+            )}
+          </Show>
         </div>
       </div>
     </div>

@@ -7,6 +7,7 @@ import { Inventory } from "./pages/game/Inventory";
 import { Market } from "./pages/game/Market";
 import { Settings } from "./pages/game/Settings";
 import { About } from "./pages/game/About";
+import { Admin } from "./pages/game/Admin";
 import {
   Profile,
   Rankings,
@@ -30,6 +31,7 @@ export const Routes: RouteDefinition[] = [
   { path: "/resource-editor", component: ResourceEditor },
   { path: "/about", component: About },
   { path: "/settings", component: Settings },
+  { path: "/admin", component: Admin },
   // Unknown paths fall back to the Overview.
   { path: "*", component: Overview },
 ];

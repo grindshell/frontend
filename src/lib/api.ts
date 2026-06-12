@@ -1,8 +1,9 @@
-// REST client for the backend's `/api` surface. Only `/login` and `/register`
-// exist today (backend/crates/server/src/api.rs); both return a plain-text
-// UUID session token on success.
+// REST client for the backend's `/api` surface: `/login` and `/register` (both
+// return a plain-text UUID session token) and `/status` (the unauthenticated
+// pre-login status payload). See backend/crates/server/src/api.rs.
 
 import { config } from "./config";
+import type { ServerStatus } from "./protocol";
 
 export type AuthError = {
   kind: "unauthorized" | "bad_request" | "conflict" | "rate_limited" | "server" | "network";
@@ -74,4 +75,25 @@ export function login(
  */
 export function register(cfToken: string, fields?: RegisterFields): Promise<string> {
   return postForToken("/register", { cfToken, ...fields });
+}
+
+async function apiGet<T>(path: string): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${config.apiEndpoint}${path}`);
+  } catch (e) {
+    throw { kind: "network", message: `Could not reach the server: ${e}` } satisfies AuthError;
+  }
+  if (!res.ok) {
+    throw authError(res.status, await res.text().catch(() => ""));
+  }
+  return (await res.json()) as T;
+}
+
+/**
+ * Fetch the pre-login status payload (MOTD + players online) for the login
+ * screen. Unauthenticated; the backend serves a coarsely-cached snapshot.
+ */
+export function fetchStatus(): Promise<ServerStatus> {
+  return apiGet<ServerStatus>("/status");
 }

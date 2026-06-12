@@ -17,6 +17,9 @@ const UTIL_ROUTES: Route[] = [
   { id: "/profile", name: "Profile", icon: "Identification" },
   { id: "/rankings", name: "Rankings", icon: "NumberedList" },
 ];
+// Server-admin tools. Only shown to designated admins (server-status.md "Admin
+// commands"); see the `isAdmin`-gated section below.
+const ADMIN_ROUTES: Route[] = [{ id: "/admin", name: "Admin", icon: "ShieldCheck" }];
 const BOTTOM_ROUTES: Route[] = [
   { id: "/settings", name: "Settings", icon: "AdjustmentsHorizontal" },
   { id: "/about", name: "About", icon: "QuestionMarkCircle" },
@@ -77,6 +80,7 @@ function ResourcesQuickView() {
 export function Sidebar(props: { open: boolean; setOpen: (v: boolean) => void }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const game = useGame();
 
   const Item = (p: { r: Route }) => {
     const active = () => location.pathname === p.r.id;
@@ -129,6 +133,14 @@ export function Sidebar(props: { open: boolean; setOpen: (v: boolean) => void })
       <ul class="menu w-full p-1.5 space-y-0.5">
         <For each={UTIL_ROUTES}>{(r) => <Item r={r} />}</For>
       </ul>
+      <Show when={game.world.isAdmin}>
+        <div class="divider my-0 mx-2 text-[10px] uppercase tracking-wider text-base-content/35">
+          {props.open ? "Admin" : ""}
+        </div>
+        <ul class="menu w-full p-1.5 space-y-0.5">
+          <For each={ADMIN_ROUTES}>{(r) => <Item r={r} />}</For>
+        </ul>
+      </Show>
       <Show when={props.open}>
         <div class="divider my-0 mx-2" />
         <ResourcesQuickView />
