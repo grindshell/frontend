@@ -57,9 +57,8 @@ export function ChatPanel(props: { onCollapse?: () => void }) {
   const roomCtx = () => (isDms() ? null : game.chat.activeRoom);
 
   /** Handle a typed "/command …" line (chat.md "Chat commands"): /whois is
-   * client-local navigation; /leave-room and /close-room autofill the active
-   * room when the argument is omitted; everything else goes to the server
-   * raw, with the room context. */
+   * client-local navigation; everything else goes to the server raw, with the
+   * room context (the server backstops e.g. a bare /leave-room from it). */
   const runCommand = (body: string) => {
     const tokens = body.split(/\s+/);
     const cmd = tokens[0].toLowerCase();
@@ -72,11 +71,7 @@ export function ChatPanel(props: { onCollapse?: () => void }) {
       }
       return;
     }
-    let line = body;
-    if ((cmd === "/leave-room" || cmd === "/close-room") && tokens.length === 1 && !isDms()) {
-      line = `${cmd} ${game.chat.activeRoom}`;
-    }
-    game.sendChatCommand(roomCtx(), line);
+    game.sendChatCommand(roomCtx(), body);
   };
 
   const submit = (e: SubmitEvent) => {

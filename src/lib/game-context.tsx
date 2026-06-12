@@ -800,47 +800,52 @@ export function GameProvider(props: ParentProps) {
     push(room ?? DM_BUCKET, { from: "System", body, kind: "system" });
   };
 
+  /** The shared shape of the fire-and-ack moderation/admin ops: a friendly
+   * offline error when disconnected, otherwise send with the handlers wired
+   * to the ack/nack. `offlineMsg` is the full offline reason. */
+  const sendOp = (
+    data: ClientData,
+    offlineMsg: string,
+    handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void },
+  ) => {
+    if (!online()) {
+      handlers?.onError?.(offlineMsg);
+      return;
+    }
+    send(data, { onAck: (msg) => handlers?.onSuccess?.(msg), onNack: handlers?.onError });
+  };
+
   const reportMessage = (
     messageId: number,
     reason: string,
     dm: boolean,
     handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
-  ) => {
-    if (!online()) {
-      handlers?.onError?.("offline — reporting needs a server connection");
-      return;
-    }
-    send(
+  ) =>
+    sendOp(
       { t: "chat", ct: "report", messageId, reason, dm },
-      { onAck: () => handlers?.onSuccess?.(), onNack: handlers?.onError },
+      "offline — reporting needs a server connection",
+      handlers,
     );
-  };
 
+  // The server broadcasts the `chatRevoke`, which is what removes the entry
+  // locally too — nothing is removed optimistically.
   const revokeMessage = (
     messageId: number,
     handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
-  ) => {
-    if (!online()) {
-      handlers?.onError?.("offline — moderation needs a server connection");
-      return;
-    }
-    // The server broadcasts the `chatRevoke`, which is what removes the
-    // entry locally too — nothing is removed optimistically.
-    send(
+  ) =>
+    sendOp(
       { t: "chat", ct: "revokeMessage", messageId },
-      { onAck: () => handlers?.onSuccess?.(), onNack: handlers?.onError },
+      "offline — moderation needs a server connection",
+      handlers,
     );
-  };
 
   const requestProfile = (username: string | null, onError?: (reason?: string) => void) => {
     // Clear the previous answer so the page shows a fresh lookup, not a stale
     // player.
     setWorld("profile", null);
-    if (!online()) {
-      onError?.("offline — profiles need a server connection");
-      return;
-    }
-    send({ t: "chat", ct: "profile", username }, { onNack: onError });
+    sendOp({ t: "chat", ct: "profile", username }, "offline — profiles need a server connection", {
+      onError,
+    });
   };
 
   const requestModLog = (page: number) => {
@@ -856,32 +861,24 @@ export function GameProvider(props: ParentProps) {
   const resolveReport = (
     reportId: number,
     handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
-  ) => {
-    if (!online()) {
-      handlers?.onError?.("offline — moderation needs a server connection");
-      return;
-    }
-    send(
+  ) =>
+    sendOp(
       { t: "chat", ct: "resolveReport", reportId },
-      { onAck: () => handlers?.onSuccess?.(), onNack: handlers?.onError },
+      "offline — moderation needs a server connection",
+      handlers,
     );
-  };
 
+  // Sudoers-gated server-side like setMotd; only surfaced to world.isAdmin.
   const setModerator = (
     username: string,
     moderator: boolean,
     handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void },
-  ) => {
-    if (!online()) {
-      handlers?.onError?.("offline — admin commands need a server connection");
-      return;
-    }
-    // Sudoers-gated server-side like setMotd; only surfaced to world.isAdmin.
-    send(
+  ) =>
+    sendOp(
       { t: "adminCmd", tt: "setModerator", username, moderator },
-      { onAck: handlers?.onSuccess, onNack: handlers?.onError },
+      "offline — admin commands need a server connection",
+      handlers,
     );
-  };
 
   const listModerators = () => {
     if (!online()) return;
