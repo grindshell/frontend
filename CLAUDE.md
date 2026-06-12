@@ -122,9 +122,12 @@ dist/                 Vite build output (gitignored)
   it) into the right column — and the live 5x5 grid editor over the `formation`
   snapshot — on the shared `CellGrid`/Gridstack grid, drag to move/swap), Area (the zone map:
   the discovered/frontier gridmap over that same shared grid, with clickable adjacent travel),
-  chat, and self-contained
+  [Market](src/pages/game/Market.tsx) (the live global market — a goods picker over the
+  tradeable-goods catalog with per-good balances, the order-book depth, a buy/sell form with a
+  live total + listing-fee preview, buy-direct, and the player's own orders with cancel; the
+  16-order cap and credits show in the header), chat, and self-contained
   pages (About, theme Settings). Pages whose backing surface the backend doesn't serve yet
-  (markets, profile/rankings, …) are **themed placeholders** (`PagePlaceholder`) — they are
+  (profile/rankings, …) are **themed placeholders** (`PagePlaceholder`) — they are
   intentionally not faked with invented game data. Don't invent server/state shapes; see §6 and §7.
 
 ## 5. The Overview card system
@@ -149,8 +152,10 @@ the client's visual language.
   zone from `world.map` (the `mapView` push — it requests `listMap` when online, same as the
   Area page; micro tier falls back to just the current zone, offline shows an empty state — no
   invented biome/weather flavour). The **Activity Log** card auto-scrolls to the newest line
-  (`world.log` tail). Only the **Market** cards remain static placeholder content (markets
-  aren't served yet — see §6).
+  (`world.log` tail). The **Market · Buy / Sell** cards render the player's own resting orders
+  by side from `world.market.myOrders` (a buy is a bid, a sell an ask; best price first) — they
+  request `listMyOrders`/`listMarketGoods` when online, and show an empty state with no orders
+  or offline. Every Overview card is now live; no static placeholder card content remains.
 
 ## 6. Data layer (server connection)
 
@@ -241,9 +246,20 @@ serves **today**:
   Frontier zones carry the same name + danger the travel destination picker exposes.
 
 **Not present on the wire** (so not modeled here): zone/world consumable
-scopes, harvesting/crafting actions, markets, profile/rankings. When those land, add their message
+scopes, harvesting/crafting actions, profile/rankings. When those land, add their message
 variants to `protocol.ts` and grow the context; until then those pages stay on local placeholder
 data.
+
+**Global market** (markets.md, served today): `listMarketGoods`/`viewMarket`/`listMyOrders` reads
+and `placeBuyOrder`/`placeSellOrder`/`buyDirect`/`cancelOrder` mutations, answered by
+`marketGoods` (the tradeable-goods catalog — fungibles only: general resources, dust/rousing
+devices, item-resources, consumables; credits + gear excluded), `marketBook` (aggregated
+bid/ask depth + the player's own orders for a good), and `marketOrders` (all the player's active
+orders). Mutations ack with fresh inventory + book + order snapshots (nothing optimistic);
+`world.market` holds `{ goods, book, myOrders }`. Sellers pay a 1% listing fee + 4% transaction
+fee into the buyback fund; buyers pay nothing. The **Overview Market · Buy/Sell cards** render
+the player's own orders by side from `world.market.myOrders` (there's no all-goods public book on
+the wire, so the Overview condenses what's server-served without a selected good).
 
 **Auth gate.** [App.tsx](src/App.tsx) shows [LoginRegister](src/pages/LoginRegister.tsx) until
 the client is authenticated; only then does it mount `GameProvider` + the router. "Authed" is
@@ -274,9 +290,10 @@ Config + endpoints: [config.ts](src/lib/config.ts) / `.env.example`.
 - **No invented game/server contracts.** Wire types in [protocol.ts](src/lib/protocol.ts)
   mirror the backend's real serde definitions: auth, chat, the idle-combat action lifecycle
   (`gameState`/`actionTick`/`actionRewards`/enemy listings), inventory, roster/gear (incl. the
-  resolved-skill build inspector on `UnitView`), consumables/effects, and formation editing —
-  the backend serves all of these today. Anything the backend doesn't yet serve (travel/area/
-  zones beyond the zone string, markets, multiplayer/boss combat, per-unit combat-stat
+  resolved-skill build inspector on `UnitView`), consumables/effects, formation editing, and the
+  global market (`marketGoods`/`marketBook`/`marketOrders`) — the backend serves all of these
+  today. Anything the backend doesn't yet serve (local markets, multiplayer/boss combat,
+  per-unit combat-stat
   *projection* of an idle formation) is **not** modeled — when a page needs that data, surface
   the need rather than hardcoding a fake shape. The canonical data model is decided in
   `knowledge-base/` and implemented server-side first; grow the data layer to match the

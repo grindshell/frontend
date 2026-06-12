@@ -4,10 +4,10 @@ import { Actions } from "./pages/game/Actions";
 import { Area } from "./pages/game/Area";
 import { Formation } from "./pages/game/Formation";
 import { Inventory } from "./pages/game/Inventory";
+import { Market } from "./pages/game/Market";
 import { Settings } from "./pages/game/Settings";
 import { About } from "./pages/game/About";
 import {
-  GlobalMarket,
   Profile,
   Rankings,
   TimeTracker,
@@ -23,7 +23,7 @@ export const Routes: RouteDefinition[] = [
   { path: "/area", component: Area },
   { path: "/formation", component: Formation },
   { path: "/inventory", component: Inventory },
-  { path: "/global-market", component: GlobalMarket },
+  { path: "/global-market", component: Market },
   { path: "/profile", component: Profile },
   { path: "/rankings", component: Rankings },
   { path: "/time-tracker", component: TimeTracker },

@@ -39,8 +39,11 @@ import type {
   FormationSlotView,
   GearView,
   GeneralResourcesView,
+  GoodInfo,
   ItemStackView,
   MapZoneInfo,
+  OrderLevel,
+  OrderView,
   RewardsView,
   ServerMessage,
   UnitView,
@@ -117,6 +120,15 @@ export type InventoryState = {
   gearTotal: number;
 };
 
+/** The global-market client slice (markets.md): the goods catalog, the order
+ * book for the currently-viewed good (replaced per `marketBook` push), and the
+ * player's own active orders (replaced per `marketOrders` push). */
+export type MarketState = {
+  goods: GoodInfo[];
+  book: { good: string; bids: OrderLevel[]; asks: OrderLevel[]; yours: OrderView[] } | null;
+  myOrders: OrderView[];
+};
+
 /** Total use-based XP accrued across a tally's `(unit, target)` gains. */
 export const totalXp = (r: RewardsView): number =>
   (r.experience ?? []).reduce((sum, e) => sum + e.amount, 0);
@@ -163,6 +175,11 @@ type WorldState = {
    * authoritative and replaced wholesale. `current` is the zone the player
    * stands in. Null until the first push (offline mode). */
   map: { current: string; zones: MapZoneInfo[] } | null;
+  /** The global market (markets.md): the tradeable-goods catalog, the order
+   * book for the currently-viewed good (replaced wholesale per `viewMarket`),
+   * and the player's own active orders across all goods. Null until the first
+   * `marketGoods` push (offline mode). */
+  market: MarketState | null;
   /** Committed holdings; null until the first server push (offline mode). */
   inventory: InventoryState | null;
   /** Owned units (the `roster` push); null until the first server push. */
@@ -227,6 +244,25 @@ export type Game = {
    * `formation` snapshot or nacks with the reason (`onError`). Nothing is
    * applied optimistically. */
   setFormation: (slots: FormationSlotView[], onError?: (reason?: string) => void) => void;
+  /** Request the global-market goods catalog (answered by `marketGoods`). */
+  listMarketGoods: () => void;
+  /** Request one good's order book (answered by `marketBook`). */
+  viewMarket: (good: string) => void;
+  /** Request the player's active orders across all goods (answered by
+   * `marketOrders`). */
+  listMyOrders: () => void;
+  /** Place a resting limit buy order; the ack rides with fresh inventory +
+   * book + orders snapshots, or nacks with the reason (`onError`). */
+  placeBuyOrder: (good: string, qty: number, price: number, onError?: (reason?: string) => void) => void;
+  /** Place a resting limit sell order (escrows goods, charges the listing
+   * fee); acks with fresh snapshots or nacks (`onError`). */
+  placeSellOrder: (good: string, qty: number, price: number, onError?: (reason?: string) => void) => void;
+  /** Buy directly off the sell book up to `qty` at a per-unit `maxPrice`
+   * ceiling; acks with fresh snapshots or nacks (`onError`). */
+  buyDirect: (good: string, qty: number, maxPrice: number, onError?: (reason?: string) => void) => void;
+  /** Cancel one of the player's resting orders by id (refunds the escrow);
+   * acks with fresh snapshots or nacks (`onError`). */
+  cancelOrder: (orderId: number, onError?: (reason?: string) => void) => void;
   /** Dismiss the reward view. */
   clearRewards: () => void;
   /** Append a local (client-only) line to the action log. */
@@ -248,6 +284,7 @@ export function GameProvider(props: ParentProps) {
     enemies: {},
     destinations: {},
     map: null,
+    market: null,
     inventory: null,
     roster: null,
     formation: null,
@@ -370,6 +407,31 @@ export function GameProvider(props: ParentProps) {
       case "formation":
         // Authoritative snapshot: replace the layout.
         setWorld("formation", msg.slots);
+        break;
+      case "marketGoods":
+        // The goods catalog — fixed for a build. Seed/replace the market slice,
+        // preserving any already-loaded book / order list.
+        setWorld("market", (m) => ({
+          goods: msg.goods,
+          book: m?.book ?? null,
+          myOrders: m?.myOrders ?? [],
+        }));
+        break;
+      case "marketBook":
+        // Authoritative book for one good: replace it wholesale.
+        setWorld("market", (m) => ({
+          goods: m?.goods ?? [],
+          book: { good: msg.good, bids: msg.bids, asks: msg.asks, yours: msg.yours },
+          myOrders: m?.myOrders ?? [],
+        }));
+        break;
+      case "marketOrders":
+        // Authoritative order list: replace.
+        setWorld("market", (m) => ({
+          goods: m?.goods ?? [],
+          book: m?.book ?? null,
+          myOrders: msg.orders,
+        }));
         break;
       case "effects":
         // Authoritative snapshot: replace the active-effect set.
@@ -688,6 +750,55 @@ export function GameProvider(props: ParentProps) {
     send({ t: "game", gt: "setFormation", slots }, { onNack: onError });
   };
 
+  const listMarketGoods = () => {
+    if (!online()) return;
+    send({ t: "game", gt: "listMarketGoods" });
+  };
+
+  const viewMarket = (good: string) => {
+    if (!online()) return;
+    send({ t: "game", gt: "viewMarket", good });
+  };
+
+  const listMyOrders = () => {
+    if (!online()) return;
+    send({ t: "game", gt: "listMyOrders" });
+  };
+
+  const placeBuyOrder = (good: string, qty: number, price: number, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — the market needs a server connection");
+      return;
+    }
+    // The ack rides with fresh inventory + book + orders snapshots; nothing is
+    // applied optimistically.
+    send({ t: "game", gt: "placeBuyOrder", good, qty, price }, { onNack: onError });
+  };
+
+  const placeSellOrder = (good: string, qty: number, price: number, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — the market needs a server connection");
+      return;
+    }
+    send({ t: "game", gt: "placeSellOrder", good, qty, price }, { onNack: onError });
+  };
+
+  const buyDirect = (good: string, qty: number, maxPrice: number, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — the market needs a server connection");
+      return;
+    }
+    send({ t: "game", gt: "buyDirect", good, qty, maxPrice }, { onNack: onError });
+  };
+
+  const cancelOrder = (orderId: number, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — the market needs a server connection");
+      return;
+    }
+    send({ t: "game", gt: "cancelOrder", orderId }, { onNack: onError });
+  };
+
   const clearRewards = () => setWorld("lastRewards", null);
 
   const logLocal = (text: string) => pushLog(text, "local");
@@ -776,6 +887,13 @@ export function GameProvider(props: ParentProps) {
     requestGearPage,
     useConsumable,
     setFormation,
+    listMarketGoods,
+    viewMarket,
+    listMyOrders,
+    placeBuyOrder,
+    placeSellOrder,
+    buyDirect,
+    cancelOrder,
     clearRewards,
     logLocal,
   };

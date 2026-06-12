@@ -6,7 +6,7 @@ import type { MapZoneInfo } from "../../../lib/protocol";
 // receives a { col, row } span and adapts its density to the card's area.
 // Tiers: micro (area<=2) · small (<=6) · medium (<=15) · large (>15).
 
-export type Span = { col: number; row: number };
+export type Span = { col: number; row: number; };
 export type Tier = "micro" | "small" | "medium" | "large";
 
 export const tier = ({ col, row }: Span): Tier => {
@@ -23,7 +23,7 @@ export type CardDef = {
   route: string;
   defSpan: Span;
   badge?: string;
-  Body: (props: { span: Span }) => JSX.Element;
+  Body: (props: { span: Span; }) => JSX.Element;
 };
 
 /* ---------- shared bits ---------- */
@@ -60,13 +60,13 @@ function Stat(props: {
 // TopBar and the Actions page render. Shows an idle state when nothing runs.
 const PHASE_LABEL: Record<string, string> = {
   preparation: "preparing",
-  execution: "fighting",
+  execution: "executing",
   downtime: "downtime",
   regroup: "regrouping",
   resolution: "resolving",
 };
 
-function ActionCard(props: { span: Span }) {
+function ActionCard(props: { span: Span; }) {
   const game = useGame();
   const T = () => tier(props.span);
   const action = () => game.world.action;
@@ -179,7 +179,7 @@ function ActionCard(props: { span: Span }) {
 // micro tier is too small for the grid, so it falls back to just the current
 // zone. Only wire-served fields are shown — no biome/weather/visited% flavour.
 
-type MapVec = { x: number; y: number; z: number };
+type MapVec = { x: number; y: number; z: number; };
 const parseMapPos = (s: string): MapVec => {
   const [x, y, z] = s.split(",").map(Number);
   return { x, y, z };
@@ -189,9 +189,9 @@ const parseMapPos = (s: string): MapVec => {
 const dangerTone = (d: number): string =>
   d <= 1 ? "text-base-content/70" : d <= 3 ? "text-warning" : "text-error";
 
-type MiniCellInfo = { zone: MapZoneInfo | null; isCurrent: boolean };
+type MiniCellInfo = { zone: MapZoneInfo | null; isCurrent: boolean; };
 
-function MiniCell(props: { cell: MiniCellInfo }) {
+function MiniCell(props: { cell: MiniCellInfo; }) {
   const z = () => props.cell.zone;
   const cur = () => props.cell.isCurrent;
   return (
@@ -212,7 +212,7 @@ function MiniCell(props: { cell: MiniCellInfo }) {
 }
 
 /** The 3x3 grid itself — a square that scales to its column up to `cap`. */
-function MiniMap(props: { cells: MiniCellInfo[]; cap: string; fontClass: string }) {
+function MiniMap(props: { cells: MiniCellInfo[]; cap: string; fontClass: string; }) {
   return (
     <div
       class={"grid grid-cols-3 grid-rows-3 gap-0.5 aspect-square mx-auto " + props.fontClass}
@@ -232,7 +232,7 @@ function MapEmpty() {
   );
 }
 
-function Coord(props: { k: string; v: string }) {
+function Coord(props: { k: string; v: string; }) {
   return (
     <div class="flex justify-between gap-2 border-b border-base-300/60 pb-0.5">
       <dt class="text-base-content/45 uppercase tracking-wider text-[10px] mt-0.5">{props.k}</dt>
@@ -241,7 +241,7 @@ function Coord(props: { k: string; v: string }) {
   );
 }
 
-function MapCard(props: { span: Span }) {
+function MapCard(props: { span: Span; }) {
   const game = useGame();
   const T = () => tier(props.span);
   const map = () => game.world.map;
@@ -358,7 +358,7 @@ function MapCard(props: { span: Span }) {
 // Live committed holdings from the game context (the server's authoritative
 // `inventory` push). Zeros until the first push (offline / not yet connected).
 
-function InventoryCard(props: { span: Span }) {
+function InventoryCard(props: { span: Span; }) {
   const game = useGame();
   const T = () => tier(props.span);
   const cur = () => game.world.inventory?.currencies;
@@ -467,102 +467,128 @@ function InventoryCard(props: { span: Span }) {
 }
 
 /* ---------- MARKET BUY / SELL ---------- */
-const MARKET = {
-  buy: [
-    { i: "Iron Ore", p: 22, q: 600 },
-    { i: "Bone Splinter", p: 41, q: 90 },
-    { i: "Healing Draught", p: 174, q: 12 },
-    { i: "Copper Ingot", p: 84, q: 210 },
-    { i: "Lockpick", p: 33, q: 40 },
-    { i: "Pyrite Shard", p: 14, q: 320 },
-    { i: "Steel Hauberk", p: 980, q: 1 },
-  ],
-  sell: [
-    { i: "Iron Ore", p: 24, q: 1200 },
-    { i: "Copper Ingot", p: 88, q: 340 },
-    { i: "Steel Plate", p: 412, q: 18 },
-    { i: "Bandage", p: 9, q: 220 },
-    { i: "Pyrite Shard", p: 16, q: 510 },
-    { i: "Rationed Bread", p: 6, q: 480 },
-    { i: "Pickaxe (Tier 2)", p: 740, q: 3 },
-  ],
-};
+// The player's own resting global-market orders for this side (markets.md), live
+// from `world.market`. A buy order is a bid, a sell order an ask. There is no
+// all-goods public book on the wire, so the Overview condenses what is server-
+// served without a selected good: the player's open orders. Best = highest bid
+// / lowest ask. Offline or before the first push → an empty state.
+type OrderRow = { name: string; price: number; qty: number; };
 
-function MarketOrdersCard(props: { span: Span; side: "buy" | "sell" }) {
+function MarketOrdersCard(props: { span: Span; side: "buy" | "sell"; }) {
+  const game = useGame();
   const T = () => tier(props.span);
-  const rows = () => MARKET[props.side];
   const tone = () => (props.side === "buy" ? "text-success" : "text-warning");
   const arrow = () => (props.side === "buy" ? "↓" : "↑");
 
+  // Pull the goods catalog (for names) and the player's orders when online. Both
+  // are idempotent reads; tracking only `online()` / the catalog length keeps
+  // this from looping on its own `marketOrders` answer.
+  createEffect(() => {
+    if (!game.online()) return;
+    if (!game.world.market?.goods.length) game.listMarketGoods();
+    game.listMyOrders();
+  });
+
+  const goodName = (id: string) =>
+    game.world.market?.goods.find((g) => g.id === id)?.name ?? id;
+
+  // This side's orders, best price first (buy: highest, sell: lowest).
+  const rows = (): OrderRow[] => {
+    const orders = (game.world.market?.myOrders ?? []).filter((o) => o.side === props.side);
+    orders.sort((a, b) => (props.side === "buy" ? b.price - a.price : a.price - b.price));
+    return orders.map((o) => ({ name: goodName(o.good), price: o.price, qty: o.qty }));
+  };
+
+  const noun = () => (props.side === "buy" ? "bids" : "asks");
+  const best = () => rows()[0]?.price;
+
   return (
-    <Switch>
-      <Match when={T() === "micro"}>
-        <div class="h-full flex flex-col items-center justify-center text-center">
-          <div class="text-[9px] uppercase tracking-wider text-base-content/50">
-            best {props.side === "buy" ? "bid" : "ask"}
-          </div>
-          <div class={"font-mono text-base " + tone()}>
-            {arrow()}
-            {rows()[0].p}
-            <span class="text-[10px] text-base-content/40">cr</span>
-          </div>
+    <Show
+      when={game.world.market}
+      fallback={
+        <div class="h-full flex items-center justify-center text-center text-[11px] text-base-content/45 px-2">
+          {game.online() ? "Loading the market…" : "Market needs a connection."}
         </div>
-      </Match>
-
-      <Match when={T() === "small"}>
-        <ul class="h-full text-[11px] divide-y divide-base-300/40 font-mono overflow-hidden">
-          <For each={rows().slice(0, 4)}>
-            {(r) => (
-              <li class="flex justify-between py-0.5">
-                <span class="truncate">{r.i}</span>
-                <span class={tone()}>
-                  {arrow()}
-                  {r.p}
-                </span>
-              </li>
-            )}
-          </For>
-        </ul>
-      </Match>
-
-      <Match when={true}>
-        <div class="flex flex-col h-full">
-          <div class="flex justify-between text-[10px] uppercase tracking-wider text-base-content/45 mb-1.5 px-1">
-            <span>item</span>
-            <span class="flex gap-4">
-              <span>price</span>
-              <span class="w-12 text-right">qty</span>
-            </span>
+      }
+    >
+      <Show
+        when={rows().length > 0}
+        fallback={
+          <div class="h-full flex items-center justify-center text-center text-[11px] text-base-content/40 px-2">
+            No open {noun()}.
           </div>
-          <ul class="text-sm divide-y divide-base-300/40 overflow-y-auto flex-1 -mx-1 px-1">
-            <For each={rows()}>
-              {(r) => (
-                <li class="flex items-baseline justify-between py-1">
-                  <span class="truncate">{r.i}</span>
-                  <span class="flex items-baseline gap-4 font-mono shrink-0">
+        }
+      >
+        <Switch>
+          <Match when={T() === "micro"}>
+            <div class="h-full flex flex-col items-center justify-center text-center">
+              <div class="text-[9px] uppercase tracking-wider text-base-content/50">
+                your best {props.side === "buy" ? "bid" : "ask"}
+              </div>
+              <div class={"font-mono text-base " + tone()}>
+                {arrow()}
+                {best()}
+                <span class="text-[10px] text-base-content/40">cr</span>
+              </div>
+            </div>
+          </Match>
+
+          <Match when={T() === "small"}>
+            <ul class="h-full text-[11px] divide-y divide-base-300/40 font-mono overflow-hidden">
+              <For each={rows().slice(0, 4)}>
+                {(r) => (
+                  <li class="flex justify-between py-0.5">
+                    <span class="truncate">{r.name}</span>
                     <span class={tone()}>
                       {arrow()}
-                      {r.p}
-                      <span class="text-base-content/40 text-xs">cr</span>
+                      {r.price}
                     </span>
-                    <span class="w-12 text-right text-base-content/70">
-                      {r.q.toLocaleString()}
-                    </span>
-                  </span>
-                </li>
-              )}
-            </For>
-          </ul>
-          <div class="mt-2 pt-2 border-t border-base-300/60 flex justify-between text-[11px] font-mono text-base-content/55">
-            <span>open {props.side === "buy" ? "bids" : "asks"}</span>
-            <span>
-              {rows().length} · best {arrow()}
-              {rows()[0].p}cr
-            </span>
-          </div>
-        </div>
-      </Match>
-    </Switch>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Match>
+
+          <Match when={true}>
+            <div class="flex flex-col h-full">
+              <div class="flex justify-between text-[10px] uppercase tracking-wider text-base-content/45 mb-1.5 px-1">
+                <span>good</span>
+                <span class="flex gap-4">
+                  <span>price</span>
+                  <span class="w-12 text-right">qty</span>
+                </span>
+              </div>
+              <ul class="text-sm divide-y divide-base-300/40 overflow-y-auto flex-1 -mx-1 px-1">
+                <For each={rows()}>
+                  {(r) => (
+                    <li class="flex items-baseline justify-between py-1">
+                      <span class="truncate">{r.name}</span>
+                      <span class="flex items-baseline gap-4 font-mono shrink-0">
+                        <span class={tone()}>
+                          {arrow()}
+                          {r.price}
+                          <span class="text-base-content/40 text-xs">cr</span>
+                        </span>
+                        <span class="w-12 text-right text-base-content/70">
+                          {r.qty.toLocaleString()}
+                        </span>
+                      </span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+              <div class="mt-2 pt-2 border-t border-base-300/60 flex justify-between text-[11px] font-mono text-base-content/55">
+                <span>your open {noun()}</span>
+                <span>
+                  {rows().length} · best {arrow()}
+                  {best()}cr
+                </span>
+              </div>
+            </div>
+          </Match>
+        </Switch>
+      </Show>
+    </Show>
   );
 }
 
@@ -581,7 +607,7 @@ const ROSTER_STAT_KEYS = [
   ["wis", "WIS"],
 ] as const;
 
-function FormationCard(props: { span: Span }) {
+function FormationCard(props: { span: Span; }) {
   const game = useGame();
   const T = () => tier(props.span);
   const units = () => game.world.roster ?? [];
@@ -692,7 +718,7 @@ const LOG_TAG: Record<string, string> = {
   local: "text-base-content/40 italic",
 };
 
-function LogCard(props: { span: Span }) {
+function LogCard(props: { span: Span; }) {
   const game = useGame();
   const T = () => tier(props.span);
   const tail = (n: number) => game.world.log.slice(-n);
@@ -757,7 +783,6 @@ export const CARDS: CardDef[] = [
   { id: "action", title: "Current Action", route: "/actions", defSpan: { col: 4, row: 2 }, Body: ActionCard },
   { id: "map", title: "Map", route: "/area", defSpan: { col: 4, row: 2 }, Body: MapCard },
   { id: "inventory", title: "Inventory", route: "/inventory", defSpan: { col: 4, row: 4 }, Body: InventoryCard },
-  { id: "formation", title: "Formation", route: "/formation", defSpan: { col: 4, row: 2 }, Body: FormationCard },
   {
     id: "buy",
     title: "Market · Buy",
@@ -766,7 +791,6 @@ export const CARDS: CardDef[] = [
     badge: "BIDS",
     Body: (p) => <MarketOrdersCard span={p.span} side="buy" />,
   },
-  { id: "log", title: "Activity Log", route: "/actions", defSpan: { col: 8, row: 2 }, badge: "LIVE", Body: LogCard },
   {
     id: "sell",
     title: "Market · Sell",
@@ -775,6 +799,8 @@ export const CARDS: CardDef[] = [
     badge: "ASKS",
     Body: (p) => <MarketOrdersCard span={p.span} side="sell" />,
   },
+  { id: "log", title: "Activity Log", route: "/actions", defSpan: { col: 8, row: 2 }, badge: "LIVE", Body: LogCard },
+  { id: "formation", title: "Formation", route: "/formation", defSpan: { col: 4, row: 2 }, Body: FormationCard },
 ];
 
 export const CARDS_BY_ID: Record<string, CardDef> = Object.fromEntries(

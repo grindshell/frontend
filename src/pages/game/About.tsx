@@ -1,12 +1,12 @@
 import { For } from "solid-js";
 
-type Item = { title: string; desc: string; url: string };
+type Item = { title: string; desc: string; url: string; };
 
 const ITEMS: Item[] = [
   {
     title: "Source",
     desc: "Client (the thing you're using right now) source code.",
-    url: "https://github.com/grindshell/grindshell-frontend",
+    url: "https://github.com/grindshell/frontend",
   },
   { title: "SolidJS", desc: "UI framework.", url: "https://github.com/solidjs/solid" },
   {

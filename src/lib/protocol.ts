@@ -109,7 +109,35 @@ export type GameData =
   // mid-action: the in-flight action keeps its cached Preparation-walk stats
   // and the new layout takes effect at the next Preparation. The ack rides
   // with the fresh `formation` snapshot.
-  | { gt: "setFormation"; slots: FormationSlotView[] };
+  | { gt: "setFormation"; slots: FormationSlotView[] }
+  // Request the catalog of tradeable goods on the global market (markets.md
+  // "Tradeable goods"). Answered with a `marketGoods` push the client caches.
+  | { gt: "listMarketGoods" }
+  // Request the order book for one good (markets.md "Order book mechanics").
+  // Answered with a `marketBook` push (depth + the player's own orders).
+  | { gt: "viewMarket"; good: string }
+  // Request the player's own active global-market orders across every good
+  // (markets.md "Order limits"). Answered with a `marketOrders` push.
+  | { gt: "listMyOrders" }
+  // Place a resting limit buy: escrows `qty × price` credits, matches crossing
+  // asks at the maker price, rests the remainder. Buyers pay no fee. The ack
+  // rides with fresh inventory + book + orders snapshots; nacks on an
+  // unknown/untradeable good, non-positive qty/price, the order cap, or
+  // insufficient credits.
+  | { gt: "placeBuyOrder"; good: string; qty: number; price: number }
+  // Place a resting limit sell: escrows the goods, charges the 1% listing fee,
+  // matches crossing bids at the maker price, rests the remainder; each fill
+  // charges the seller 4%. Nacks on an unknown/untradeable good, non-positive
+  // qty/price, the order cap, or insufficient goods/credits (listing fee).
+  | { gt: "placeSellOrder"; good: string; qty: number; price: number }
+  // Buy directly off the front of the sell book (markets.md "Direct buying"):
+  // an immediate taker buy up to `qty` and a per-unit `maxPrice`, paying each
+  // resting ask at its price. Nothing rests. Nacks on an unknown/untradeable
+  // good or a non-positive qty.
+  | { gt: "buyDirect"; good: string; qty: number; maxPrice: number }
+  // Cancel one of the player's resting orders by id: refunds the escrow (but
+  // not the listing fee). Nacks when the order is missing or not the player's.
+  | { gt: "cancelOrder"; orderId: number };
 
 // Top-level inbound data, tagged on `t`. Chat ops are carried under `t: "chat"`
 // and game ops under `t: "game"`. `requestState` is a top-level *control*
@@ -390,6 +418,37 @@ export type ActionView = {
   travel?: TravelView;
 };
 
+/** One tradeable good in the global-market catalog (`GoodInfo`, markets.md
+ * "Tradeable goods"). `kind` groups it for display: `currency` (dust / rousing
+ * devices), `general` (bio / met / ele / liq), `resource` (item resources), or
+ * `consumable`. `category` is the general-resource grouping of item resources
+ * (absent otherwise). Credits and gear are not tradeable here. */
+export type GoodInfo = {
+  id: string;
+  name: string;
+  kind: string;
+  category?: string;
+};
+
+/** One aggregated price level of an order book (`OrderLevel`): the total
+ * resting quantity at `price`. Public depth is shown as levels (no foreign
+ * order ids). */
+export type OrderLevel = {
+  price: number;
+  qty: number;
+};
+
+/** One of the player's own resting orders (`OrderView`), addressable by `id`
+ * (so the client can cancel it). `qty` is the remaining quantity; `side` is
+ * `"buy"` or `"sell"`. */
+export type OrderView = {
+  id: number;
+  good: string;
+  side: string;
+  price: number;
+  qty: number;
+};
+
 // Tagged on `t` (camelCase). Mirrors `Outbound`. `from` is the sender's
 // USERNAME; `sentAt` is an RFC3339 / ISO-8601 timestamp string. `messageId` is
 // a backend i64 (safe as a JS number for any realistic message count).
@@ -489,7 +548,18 @@ export type ServerMessage =
   // client REPLACES its layout from this. An edit never touches an in-flight
   // action's cached stats, so this and the action view can legitimately
   // disagree mid-action.
-  | { t: "formation"; slots: FormationSlotView[] };
+  | { t: "formation"; slots: FormationSlotView[] }
+  // The answer to `listMarketGoods`: the catalog of tradeable goods. Fixed for
+  // a server build, so the client may cache it.
+  | { t: "marketGoods"; goods: GoodInfo[] }
+  // The answer to `viewMarket` (and the push riding every order mutation's
+  // ack): one good's order book — aggregated `bids`/`asks` depth (best price
+  // first) plus `yours`, the player's own resting orders for it. The client
+  // replaces its book for `good` from this.
+  | { t: "marketBook"; good: string; bids: OrderLevel[]; asks: OrderLevel[]; yours: OrderView[] }
+  // The answer to `listMyOrders`: every active order the player holds, across
+  // all goods. The client replaces its order list from this.
+  | { t: "marketOrders"; orders: OrderView[] };
 
 /**
  * Parse a raw WebSocket text frame into typed `ServerMessage`s.
