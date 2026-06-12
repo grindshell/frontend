@@ -69,7 +69,27 @@ export type ChatData =
   | { ct: "sendDm"; to: string; body: string }
   | { ct: "block"; target: string }
   | { ct: "unblock"; target: string }
-  | { ct: "report"; messageId: number; reason: string };
+  // `dm` says which message log the id addresses — room messages and DMs are
+  // stored (and numbered) separately server-side.
+  | { ct: "report"; messageId: number; reason: string; dm: boolean }
+  // A chat command line (chat.md "Chat commands"): the raw "/command …" text
+  // plus the room it was typed in (null outside any room, e.g. the DM view).
+  // Parsed and dispatched server-side; unauthorized/malformed commands nack
+  // politely with a usage message.
+  | { ct: "command"; room?: string | null; body: string }
+  // Revoke a room message by id (moderators/admins only) — marks it
+  // server-side and broadcasts a `chatRevoke` to every connected client.
+  | { ct: "revokeMessage"; messageId: number }
+  // One page of the enforcement log (moderators/admins only) → `modLogPage`.
+  | { ct: "modLog"; page: number }
+  // One page of the pending report queue (moderators/admins only) →
+  // `modReportsPage`.
+  | { ct: "modReports"; page: number }
+  // Resolve (dismiss) a pending report (moderators/admins only).
+  | { ct: "resolveReport"; reportId: number }
+  // A player's minimal profile (username + online); omitted username = own.
+  // Answered with a `chatProfile` push.
+  | { ct: "profile"; username?: string | null };
 
 // Game-subsystem payloads. Tagged on `gt` (camelCase). Mirrors `GameData`
 // (+ the flattened `ActionRequest` under `kind` for `changeAction`).
@@ -166,6 +186,11 @@ export type ClientData =
   // designation (server-status.md "Admin commands"). A non-designated requestor
   // is disconnected, so the client only surfaces these to admins (`world.isAdmin`).
   | { t: "adminCmd"; tt: "setMotd"; body: string }
+  // Designate / un-designate a player moderator (chat.md "Moderator
+  // designation"); also reachable as the /promote and /unpromote chat commands.
+  | { t: "adminCmd"; tt: "setModerator"; username: string; moderator: boolean }
+  // List the current player moderators → a `moderators` push.
+  | { t: "adminCmd"; tt: "listModerators" }
   | { t: "requestState" };
 
 /** The full client → server envelope (`Message`). `nonce` correlates Ack/Nack. */
@@ -470,6 +495,43 @@ export type OrderView = {
   qty: number;
 };
 
+/** One entry of the enforcement log (`ModLogEntryView`, chat.md "Logging"),
+ * actors resolved to usernames server-side (`#<id>` for nameless accounts). */
+export type ModLogEntryView = {
+  id: number;
+  /** The acting player moderator / server admin. */
+  moderator: string;
+  /** The action tag ("global_ban", "revoke_message", "kick", …). */
+  action: string;
+  /** The sanctioned/affected player, when the action had one. */
+  target?: string;
+  /** The room the action applied to, when room-scoped. */
+  room?: string;
+  /** The moderator's optional free-text note. */
+  note?: string;
+  createdAt: string;
+};
+
+/** One pending report (`ReportView`, chat.md "Reporting"), with the reported
+ * message joined in so the queue is reviewable without further lookups. */
+export type ReportView = {
+  id: number;
+  reporter: string;
+  messageId: number;
+  /** Whether the reported message is a DM (true) or a room message (false). */
+  dm: boolean;
+  sender: string;
+  /** The room the message was posted in (absent for DMs). */
+  room?: string;
+  /** The reported body — preserved even if since revoked. */
+  body: string;
+  reason: string;
+  sentAt: string;
+  createdAt: string;
+  /** Already revoked (room messages only). */
+  revoked: boolean;
+};
+
 // Tagged on `t` (camelCase). Mirrors `Outbound`. `from` is the sender's
 // USERNAME; `sentAt` is an RFC3339 / ISO-8601 timestamp string. `messageId` is
 // a backend i64 (safe as a JS number for any realistic message count).
@@ -480,9 +542,23 @@ export type ServerMessage =
   | { t: "chatDm"; messageId: number; from: string; body: string; sentAt: string }
   | { t: "chatSystem"; room: string; body: string }
   // Whether this connection's account is a designated admin (server-status.md
-  // "Admin commands"). Pushed once at connect; a UI hint for showing the admin
-  // surface (the server re-checks the sudoers designation on every command).
-  | { t: "adminStatus"; isAdmin: boolean }
+  // "Admin commands") and/or a player moderator (chat.md "Moderator
+  // designation"). Pushed once at connect; a UI hint for showing the
+  // admin/moderation surfaces (the server re-authorizes every command).
+  | { t: "adminStatus"; isAdmin: boolean; isModerator: boolean }
+  // A room message was revoked (chat.md "Enforcement": Message revocation):
+  // remove the room message with this id from the rendered transcript.
+  // Broadcast to every connected client; ignore ids never seen.
+  | { t: "chatRevoke"; messageId: number }
+  // The answer to a `profile` request: the username (absent for the
+  // requester's own guest account) and whether the player is connected.
+  | { t: "chatProfile"; username?: string | null; online: boolean }
+  // One page of the enforcement log, newest first (the moderation view).
+  | { t: "modLogPage"; page: number; hasMore: boolean; entries: ModLogEntryView[] }
+  // One page of the pending report queue, newest first.
+  | { t: "modReportsPage"; page: number; hasMore: boolean; reports: ReportView[] }
+  // The current player moderators (the `listModerators` admin command's answer).
+  | { t: "moderators"; usernames: string[] }
   // The chat half of the connect-time state push (accounts.md "State
   // synchronization"): the authoritative set of rooms this connection is
   // subscribed to. Sent on every (re)connect and in reply to `requestState`.

@@ -1,4 +1,4 @@
-import { Show, createSignal, onMount } from "solid-js";
+import { For, Show, createEffect, createSignal, onMount } from "solid-js";
 import { useGame } from "../../lib/game-context";
 import { fetchStatus } from "../../lib/api";
 import { config } from "../../lib/config";
@@ -15,6 +15,26 @@ export function Admin() {
   const [body, setBody] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [result, setResult] = createSignal<{ ok: boolean; text: string }>();
+  const [promotee, setPromotee] = createSignal("");
+  const [modResult, setModResult] = createSignal<{ ok: boolean; text: string }>();
+
+  // Load the moderator listing once connected as an admin (chat.md
+  // "Moderator designation").
+  createEffect(() => {
+    if (game.online() && game.world.isAdmin) game.listModerators();
+  });
+
+  const designate = (username: string, moderator: boolean) => {
+    setModResult(undefined);
+    game.setModerator(username, moderator, {
+      onSuccess: (msg) => {
+        setModResult({ ok: true, text: msg ?? "designation updated" });
+        setPromotee("");
+        game.listModerators();
+      },
+      onError: (reason) => setModResult({ ok: false, text: reason ?? "failed" }),
+    });
+  };
 
   // Prefill with the current MOTD (the unauthenticated status read). Offline → skip.
   onMount(async () => {
@@ -93,6 +113,80 @@ export function Admin() {
                 )}
               </Show>
             </div>
+          </fieldset>
+        </div>
+
+        {/* Player-moderator designation (chat.md "Moderator designation") —
+            also reachable as the /promote and /unpromote chat commands. */}
+        <div class="p-3 border border-base-300 rounded-xl bg-base-200 max-w-2xl">
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Player moderators</legend>
+            <Show
+              when={game.world.moderators}
+              fallback={
+                <p class="text-sm text-base-content/45">
+                  {game.online() ? "Loading designations…" : "Offline — connect to a server to manage moderators."}
+                </p>
+              }
+            >
+              {(mods) => (
+                <Show
+                  when={mods().length > 0}
+                  fallback={<p class="text-sm text-base-content/45">No player moderators designated.</p>}
+                >
+                  <ul class="space-y-1">
+                    <For each={mods()}>
+                      {(name) => (
+                        <li class="flex items-center gap-3 text-sm">
+                          <span class="font-mono">{name}</span>
+                          <button
+                            class="btn btn-xs btn-outline"
+                            disabled={!game.online()}
+                            onClick={() => designate(name, false)}
+                          >
+                            Unpromote
+                          </button>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </Show>
+              )}
+            </Show>
+            <form
+              class="flex items-center gap-2 mt-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const name = promotee().trim();
+                if (name) designate(name, true);
+              }}
+            >
+              <input
+                type="text"
+                class="input input-sm grow font-mono"
+                placeholder="username"
+                value={promotee()}
+                onInput={(e) => setPromotee(e.currentTarget.value)}
+              />
+              <button
+                type="submit"
+                class="btn btn-sm btn-primary"
+                disabled={!game.online() || !promotee().trim()}
+              >
+                Promote
+              </button>
+            </form>
+            <p class="label text-base-content/45">
+              Moderators hold the server-wide chat-moderation powers. Promotions run as root and
+              are logged centrally against you.
+            </p>
+            <Show when={modResult()}>
+              {(r) => (
+                <span class={"text-sm " + (r().ok ? "text-success" : "text-error")}>
+                  {r().text}
+                </span>
+              )}
+            </Show>
           </fieldset>
         </div>
       </Show>

@@ -13,14 +13,6 @@ export const GlobalMarket = () => (
   />
 );
 
-export const Profile = () => (
-  <PagePlaceholder
-    title="Profile"
-    icon="Identification"
-    blurb="Your character sheet, account details, and progression — pending the player data layer."
-  />
-);
-
 export const Rankings = () => (
   <PagePlaceholder
     title="Rankings"

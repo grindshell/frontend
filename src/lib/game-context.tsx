@@ -42,8 +42,10 @@ import type {
   GoodInfo,
   ItemStackView,
   MapZoneInfo,
+  ModLogEntryView,
   OrderLevel,
   OrderView,
+  ReportView,
   RewardsView,
   ServerMessage,
   UnitView,
@@ -68,6 +70,9 @@ export type ChatEntry = {
   /** ISO timestamp, or undefined for locally-generated entries. */
   at?: string;
   kind: "room" | "dm" | "system" | "local";
+  /** The server-assigned message id (room messages and DMs) — what report
+   * and revoke ops address; absent on local/system lines. */
+  messageId?: number;
 };
 
 const DM_BUCKET = "@dms";
@@ -197,6 +202,22 @@ type WorldState = {
    * re-checks the sudoers designation on every command. False until pushed /
    * offline. */
   isAdmin: boolean;
+  /** Whether this connection's account is a designated player moderator
+   * (chat.md "Moderator designation"); same push, same UI-hint caveats. */
+  isModerator: boolean;
+  /** The last `chatProfile` answer (chat.md "Player profiles"): the looked-up
+   * player's username (null for the requester's own guest account) and live
+   * online flag. Null until a lookup answers / after a new lookup starts. */
+  profile: { username: string | null; online: boolean } | null;
+  /** The current page of the enforcement log (the moderation view; staff
+   * only). Replaced per `modLogPage` push; null until requested. */
+  modLog: { page: number; hasMore: boolean; entries: ModLogEntryView[] } | null;
+  /** The current page of the pending report queue (staff only). Replaced per
+   * `modReportsPage` push; null until requested. */
+  modReports: { page: number; hasMore: boolean; reports: ReportView[] } | null;
+  /** The designated player moderators (admin UI; the `moderators` push).
+   * Null until requested. */
+  moderators: string[] | null;
   lastRewards: RewardReport | null;
   /** The last combat request, for quick restart. */
   lastCombat: { enemy: string; kc: number } | null;
@@ -214,6 +235,51 @@ export type Game = {
   sendDm: (to: string, body: string) => void;
   joinRoom: (room: string, password?: string) => void;
   leaveRoom: (room: string) => void;
+  /** Send a raw "/command …" line (chat.md "Chat commands") with the room it
+   * was typed in (null from the DM view). The server parses, authorizes, and
+   * dispatches it; the result (an ack's result line or a nack's reason) is
+   * surfaced as a system line where the command was typed. `/logout`'s ack
+   * additionally signs the client out. */
+  sendChatCommand: (room: string | null, body: string) => void;
+  /** Append a client-local system line to a room's transcript (null = the DM
+   * view) — UI feedback like "report filed", never sent anywhere. */
+  chatNotice: (room: string | null, body: string) => void;
+  /** Report a message by its server id (chat.md "Reporting"); `dm` says which
+   * message log the id addresses. */
+  reportMessage: (
+    messageId: number,
+    reason: string,
+    dm: boolean,
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+  ) => void;
+  /** Revoke a room message (moderators/admins only — chat.md "Enforcement"):
+   * the server marks it and broadcasts the hide instruction to everyone. */
+  revokeMessage: (
+    messageId: number,
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+  ) => void;
+  /** Look up a player's minimal profile (username + online); null = own.
+   * Answered via `world.profile`. */
+  requestProfile: (username: string | null, onError?: (reason?: string) => void) => void;
+  /** Request a page of the enforcement log (staff only; → `world.modLog`). */
+  requestModLog: (page: number) => void;
+  /** Request a page of the pending report queue (staff only; →
+   * `world.modReports`). */
+  requestModReports: (page: number) => void;
+  /** Resolve (dismiss) a pending report (staff only). */
+  resolveReport: (
+    reportId: number,
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+  ) => void;
+  /** Designate / un-designate a player moderator (admin command, sudoers-
+   * gated server-side — only surface to `world.isAdmin`). */
+  setModerator: (
+    username: string,
+    moderator: boolean,
+    handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void },
+  ) => void;
+  /** Request the current moderator list (admin command; → `world.moderators`). */
+  listModerators: () => void;
   resync: () => void;
   dmBucket: string;
   world: WorldState;
@@ -303,6 +369,11 @@ export function GameProvider(props: ParentProps) {
     formation: null,
     effects: [],
     isAdmin: false,
+    isModerator: false,
+    profile: null,
+    modLog: null,
+    modReports: null,
+    moderators: null,
     lastRewards: null,
     lastCombat: null,
     lastTravel: null,
@@ -324,7 +395,9 @@ export function GameProvider(props: ParentProps) {
   // right room) only when the response arrives — not optimistically. Entries
   // are dropped on disconnect: they can never resolve across a reconnect, and
   // the server's connect-time chatState push re-baselines everything anyway.
-  type Pending = { onAck?: () => void; onNack?: (reason?: string) => void };
+  // `onAck` receives the ack's optional result line (chat commands answer
+  // with e.g. "troll banned for 3600s").
+  type Pending = { onAck?: (msg?: string) => void; onNack?: (reason?: string) => void };
   const pending = new Map<number, Pending>();
 
   const ensureRoom = (room: string) => {
@@ -364,13 +437,51 @@ export function GameProvider(props: ParentProps) {
         break;
       }
       case "chatRoomMsg":
-        push(msg.room, { room: msg.room, from: msg.from, body: msg.body, at: msg.sentAt, kind: "room" });
+        push(msg.room, {
+          room: msg.room,
+          from: msg.from,
+          body: msg.body,
+          at: msg.sentAt,
+          kind: "room",
+          messageId: msg.messageId,
+        });
         break;
       case "chatDm":
-        push(DM_BUCKET, { from: msg.from, body: msg.body, at: msg.sentAt, kind: "dm" });
+        push(DM_BUCKET, {
+          from: msg.from,
+          body: msg.body,
+          at: msg.sentAt,
+          kind: "dm",
+          messageId: msg.messageId,
+        });
         break;
       case "chatSystem":
         push(msg.room, { room: msg.room, from: "System", body: msg.body, kind: "system" });
+        break;
+      case "chatRevoke": {
+        // A moderator revoked a room message (chat.md "Enforcement"): drop it
+        // from every rendered transcript. DM entries keep their ids in a
+        // separate log, so only room entries match.
+        for (const room of Object.keys(chat.byRoom)) {
+          if (chat.byRoom[room].some((e) => e.kind === "room" && e.messageId === msg.messageId)) {
+            setChat("byRoom", room, (es) =>
+              es.filter((e) => !(e.kind === "room" && e.messageId === msg.messageId)),
+            );
+          }
+        }
+        break;
+      }
+      case "chatProfile":
+        setWorld("profile", { username: msg.username ?? null, online: msg.online });
+        break;
+      case "modLogPage":
+        setWorld("modLog", { page: msg.page, hasMore: msg.hasMore, entries: msg.entries });
+        break;
+      case "modReportsPage":
+        setWorld("modReports", { page: msg.page, hasMore: msg.hasMore, reports: msg.reports });
+        break;
+      case "moderators":
+        setWorld("moderators", msg.usernames);
         break;
       case "gameState": {
         // The game half of the state push: replace, don't merge.
@@ -423,8 +534,10 @@ export function GameProvider(props: ParentProps) {
         setWorld("formation", msg.slots);
         break;
       case "adminStatus":
-        // Connect-time admin designation (server-status.md). A UI hint only.
+        // Connect-time admin/moderator designation (server-status.md /
+        // chat.md "Moderator designation"). UI hints only.
         setWorld("isAdmin", msg.isAdmin);
+        setWorld("isModerator", msg.isModerator);
         break;
       case "marketGoods":
         // The goods catalog — fixed for a build. Seed/replace the market slice,
@@ -581,7 +694,7 @@ export function GameProvider(props: ParentProps) {
         const p = msg.nonce != null ? pending.get(msg.nonce) : undefined;
         if (p) {
           pending.delete(msg.nonce!);
-          p.onAck?.();
+          p.onAck?.(msg.msg ?? undefined);
         }
         break;
       }
@@ -655,6 +768,124 @@ export function GameProvider(props: ParentProps) {
           push(room, { from: "System", body: `✗ ${reason ?? "could not leave the room"}`, kind: "system" }),
       },
     );
+  };
+
+  const sendChatCommand = (room: string | null, body: string) => {
+    const trimmed = body.trim();
+    if (!trimmed) return;
+    // Result lines land where the command was typed (the DM view shows them
+    // in the DM bucket).
+    const surface = room ?? DM_BUCKET;
+    if (!online()) {
+      push(surface, { from: "System", body: "✗ commands need a server connection", kind: "system" });
+      return;
+    }
+    const isLogout = /^\/logout\b/i.test(trimmed);
+    send(
+      { t: "chat", ct: "command", room, body: trimmed },
+      {
+        onAck: (msg) => {
+          if (msg) push(surface, { from: "System", body: `✓ ${msg}`, kind: "system" });
+          // The server has already invalidated every session and severed the
+          // connection; flip the client back to the auth gate too.
+          if (isLogout) clearAuth();
+        },
+        onNack: (reason) =>
+          push(surface, { from: "System", body: `✗ ${reason ?? "command failed"}`, kind: "system" }),
+      },
+    );
+  };
+
+  const chatNotice = (room: string | null, body: string) => {
+    push(room ?? DM_BUCKET, { from: "System", body, kind: "system" });
+  };
+
+  const reportMessage = (
+    messageId: number,
+    reason: string,
+    dm: boolean,
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+  ) => {
+    if (!online()) {
+      handlers?.onError?.("offline — reporting needs a server connection");
+      return;
+    }
+    send(
+      { t: "chat", ct: "report", messageId, reason, dm },
+      { onAck: () => handlers?.onSuccess?.(), onNack: handlers?.onError },
+    );
+  };
+
+  const revokeMessage = (
+    messageId: number,
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+  ) => {
+    if (!online()) {
+      handlers?.onError?.("offline — moderation needs a server connection");
+      return;
+    }
+    // The server broadcasts the `chatRevoke`, which is what removes the
+    // entry locally too — nothing is removed optimistically.
+    send(
+      { t: "chat", ct: "revokeMessage", messageId },
+      { onAck: () => handlers?.onSuccess?.(), onNack: handlers?.onError },
+    );
+  };
+
+  const requestProfile = (username: string | null, onError?: (reason?: string) => void) => {
+    // Clear the previous answer so the page shows a fresh lookup, not a stale
+    // player.
+    setWorld("profile", null);
+    if (!online()) {
+      onError?.("offline — profiles need a server connection");
+      return;
+    }
+    send({ t: "chat", ct: "profile", username }, { onNack: onError });
+  };
+
+  const requestModLog = (page: number) => {
+    if (!online()) return;
+    send({ t: "chat", ct: "modLog", page: Math.max(0, Math.floor(page)) });
+  };
+
+  const requestModReports = (page: number) => {
+    if (!online()) return;
+    send({ t: "chat", ct: "modReports", page: Math.max(0, Math.floor(page)) });
+  };
+
+  const resolveReport = (
+    reportId: number,
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+  ) => {
+    if (!online()) {
+      handlers?.onError?.("offline — moderation needs a server connection");
+      return;
+    }
+    send(
+      { t: "chat", ct: "resolveReport", reportId },
+      { onAck: () => handlers?.onSuccess?.(), onNack: handlers?.onError },
+    );
+  };
+
+  const setModerator = (
+    username: string,
+    moderator: boolean,
+    handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void },
+  ) => {
+    if (!online()) {
+      handlers?.onError?.("offline — admin commands need a server connection");
+      return;
+    }
+    // Sudoers-gated server-side like setMotd; only surfaced to world.isAdmin.
+    send(
+      { t: "adminCmd", tt: "setModerator", username, moderator },
+      { onAck: handlers?.onSuccess, onNack: handlers?.onError },
+    );
+  };
+
+  const listModerators = () => {
+    if (!online()) return;
+    send({ t: "adminCmd", tt: "listModerators" });
   };
 
   /** Ask the server for a full state refresh (top-level control message,
@@ -908,6 +1139,16 @@ export function GameProvider(props: ParentProps) {
     sendDm,
     joinRoom,
     leaveRoom,
+    sendChatCommand,
+    chatNotice,
+    reportMessage,
+    revokeMessage,
+    requestProfile,
+    requestModLog,
+    requestModReports,
+    resolveReport,
+    setModerator,
+    listModerators,
     resync,
     dmBucket: DM_BUCKET,
     world,

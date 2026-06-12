@@ -17,9 +17,12 @@ const UTIL_ROUTES: Route[] = [
   { id: "/profile", name: "Profile", icon: "Identification" },
   { id: "/rankings", name: "Rankings", icon: "NumberedList" },
 ];
-// Server-admin tools. Only shown to designated admins (server-status.md "Admin
-// commands"); see the `isAdmin`-gated section below.
-const ADMIN_ROUTES: Route[] = [{ id: "/admin", name: "Admin", icon: "ShieldCheck" }];
+// Moderation/operator tools (chat.md "Moderator designation" /
+// server-status.md "Admin commands"). The section shows for player moderators
+// and server admins; the Admin entry itself is admin-only — see the gated
+// section below.
+const MODERATOR_ROUTE: Route = { id: "/moderator", name: "Moderator", icon: "Flag" };
+const ADMIN_ROUTE: Route = { id: "/admin", name: "Admin", icon: "ShieldCheck" };
 const BOTTOM_ROUTES: Route[] = [
   { id: "/settings", name: "Settings", icon: "AdjustmentsHorizontal" },
   { id: "/about", name: "About", icon: "QuestionMarkCircle" },
@@ -133,12 +136,15 @@ export function Sidebar(props: { open: boolean; setOpen: (v: boolean) => void })
       <ul class="menu w-full p-1.5 space-y-0.5">
         <For each={UTIL_ROUTES}>{(r) => <Item r={r} />}</For>
       </ul>
-      <Show when={game.world.isAdmin}>
+      <Show when={game.world.isAdmin || game.world.isModerator}>
         <div class="divider my-0 mx-2 text-[10px] uppercase tracking-wider text-base-content/35">
           {props.open ? "Admin" : ""}
         </div>
         <ul class="menu w-full p-1.5 space-y-0.5">
-          <For each={ADMIN_ROUTES}>{(r) => <Item r={r} />}</For>
+          <Item r={MODERATOR_ROUTE} />
+          <Show when={game.world.isAdmin}>
+            <Item r={ADMIN_ROUTE} />
+          </Show>
         </ul>
       </Show>
       <Show when={props.open}>

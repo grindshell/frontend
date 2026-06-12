@@ -8,8 +8,9 @@ import { Market } from "./pages/game/Market";
 import { Settings } from "./pages/game/Settings";
 import { About } from "./pages/game/About";
 import { Admin } from "./pages/game/Admin";
+import { Moderator } from "./pages/game/Moderator";
+import { Profile } from "./pages/game/Profile";
 import {
-  Profile,
   Rankings,
   TimeTracker,
   ResourceEditor,
@@ -25,12 +26,15 @@ export const Routes: RouteDefinition[] = [
   { path: "/formation", component: Formation },
   { path: "/inventory", component: Inventory },
   { path: "/global-market", component: Market },
-  { path: "/profile", component: Profile },
+  // `/profile` is your own; `/profile/<username>` another player's (the chat
+  // name-click / `/whois` target).
+  { path: "/profile/:username?", component: Profile },
   { path: "/rankings", component: Rankings },
   { path: "/time-tracker", component: TimeTracker },
   { path: "/resource-editor", component: ResourceEditor },
   { path: "/about", component: About },
   { path: "/settings", component: Settings },
+  { path: "/moderator", component: Moderator },
   { path: "/admin", component: Admin },
   // Unknown paths fall back to the Overview.
   { path: "*", component: Overview },
