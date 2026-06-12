@@ -1,5 +1,6 @@
-import { For, Match, Show, Switch, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createEffect, type JSX } from "solid-js";
 import { actionTarget, summarizeRewards, useGame } from "../../../lib/game-context";
+import type { MapZoneInfo } from "../../../lib/protocol";
 
 // Overview cards — condensed views of the underlying game pages. Each body
 // receives a { col, row } span and adapts its density to the card's area.
@@ -170,52 +171,63 @@ function ActionCard(props: { span: Span }) {
 }
 
 /* ---------- MAP ---------- */
-const MAP_GRID = [
-  "............",
-  "..####..####",
-  "..#..#..#*.#",
-  "..#..####..#",
-  "...P........",
-  "##..####..##",
-];
-const BIG_MAP = [
-  "................................",
-  "....####..####..........####....",
-  "....#..#..#*.#..........#..#....",
-  "....#..####..#..........####....",
-  ".....P.........................*",
-  "##..####..##....####..########..",
-  "................################",
-  "....####..####..####..#......#..",
-  "................................",
-];
+// A live 3x3 neighbourhood from the game context (`world.map`, the server's
+// `mapView` push — the same source the Area page renders): the current zone at
+// the centre plus its eight grid neighbours on the current Z-plane, north up.
+// Requests the map when online; offline / before the first push it shows a
+// compact empty state rather than invented zones (frontend CLAUDE.md §6). The
+// micro tier is too small for the grid, so it falls back to just the current
+// zone. Only wire-served fields are shown — no biome/weather/visited% flavour.
 
-function MapGlyph(props: { ch: string }) {
+type MapVec = { x: number; y: number; z: number };
+const parseMapPos = (s: string): MapVec => {
+  const [x, y, z] = s.split(",").map(Number);
+  return { x, y, z };
+};
+
+/** Danger text tone for a neighbour's number (1 safe → 5 lethal). */
+const dangerTone = (d: number): string =>
+  d <= 1 ? "text-base-content/70" : d <= 3 ? "text-warning" : "text-error";
+
+type MiniCellInfo = { zone: MapZoneInfo | null; isCurrent: boolean };
+
+function MiniCell(props: { cell: MiniCellInfo }) {
+  const z = () => props.cell.zone;
+  const cur = () => props.cell.isCurrent;
   return (
-    <Switch fallback={<span class="text-base-content/15">·</span>}>
-      <Match when={props.ch === "P"}>
-        <span class="text-primary font-bold">@</span>
-      </Match>
-      <Match when={props.ch === "*"}>
-        <span class="text-warning">◆</span>
-      </Match>
-      <Match when={props.ch === "#"}>
-        <span class="text-base-content/30">█</span>
-      </Match>
-    </Switch>
+    <div
+      class="rounded-sm flex items-center justify-center leading-none font-mono"
+      classList={{
+        "bg-primary text-primary-content font-bold": cur(),
+        "bg-base-300/70": !cur() && !!z() && z()!.discovered,
+        "border border-dashed border-base-content/40": !cur() && !!z() && !z()!.discovered,
+        "bg-base-300/15": !cur() && !z(),
+      }}
+    >
+      <Show when={cur()} fallback={<Show when={z()}>{(zz) => <span class={dangerTone(zz().danger)}>{zz().danger}</span>}</Show>}>
+        @
+      </Show>
+    </div>
   );
 }
 
-function MapAscii(props: { grid: string[]; class?: string }) {
+/** The 3x3 grid itself — a square that scales to its column up to `cap`. */
+function MiniMap(props: { cells: MiniCellInfo[]; cap: string; fontClass: string }) {
   return (
-    <div class={"whitespace-pre " + (props.class ?? "")}>
-      <For each={props.grid}>
-        {(row) => (
-          <div>
-            <For each={[...row]}>{(ch) => <MapGlyph ch={ch} />}</For>
-          </div>
-        )}
-      </For>
+    <div
+      class={"grid grid-cols-3 grid-rows-3 gap-0.5 aspect-square mx-auto " + props.fontClass}
+      style={`width: min(100%, ${props.cap});`}
+    >
+      <For each={props.cells}>{(c) => <MiniCell cell={c} />}</For>
+    </div>
+  );
+}
+
+function MapEmpty() {
+  return (
+    <div class="h-full flex flex-col items-center justify-center text-center gap-1 text-base-content/45">
+      <span class="font-mono text-base-content/30 tracking-widest">· · ·</span>
+      <span class="text-[11px]">The map streams from the server.</span>
     </div>
   );
 }
@@ -224,75 +236,119 @@ function Coord(props: { k: string; v: string }) {
   return (
     <div class="flex justify-between gap-2 border-b border-base-300/60 pb-0.5">
       <dt class="text-base-content/45 uppercase tracking-wider text-[10px] mt-0.5">{props.k}</dt>
-      <dd class="font-mono text-base-content/80">{props.v}</dd>
+      <dd class="font-mono text-base-content/80 truncate">{props.v}</dd>
     </div>
   );
 }
 
 function MapCard(props: { span: Span }) {
+  const game = useGame();
   const T = () => tier(props.span);
+  const map = () => game.world.map;
+  const currentKey = () => map()?.current ?? game.world.zone;
+  const current = () => parseMapPos(currentKey());
+  const currentZone = () => map()?.zones.find((z) => z.pos === currentKey()) ?? null;
+  const known = () => map()?.zones.filter((z) => z.discovered).length ?? 0;
+
+  // Pull the map when connected — the connect-time push doesn't include it
+  // (listMap is on-demand). Tracks zone + online only, like the Area page.
+  createEffect(() => {
+    void game.world.zone;
+    if (game.online()) game.listMap();
+  });
+
+  // The 3x3 window on the current Z-plane in display order (north up):
+  // rows dy = +1, 0, −1 · cols dx = −1, 0, +1.
+  const cells = (): MiniCellInfo[] => {
+    const c = current();
+    const m = map();
+    const out: MiniCellInfo[] = [];
+    for (const dy of [1, 0, -1]) {
+      for (const dx of [-1, 0, 1]) {
+        const key = `${c.x + dx},${c.y + dy},${c.z}`;
+        const zone = m?.zones.find((z) => z.pos === key) ?? null;
+        out.push({ zone, isCurrent: dx === 0 && dy === 0 });
+      }
+    }
+    return out;
+  };
+
+  const coordStr = () => `(${current().x}, ${current().y}, ${current().z})`;
+
   return (
     <Switch>
       <Match when={T() === "micro"}>
-        <div class="h-full flex items-center justify-center font-mono text-[10px] text-base-content/65">
-          <span class="text-primary mr-1">@</span> (14,7)
+        <div class="h-full flex flex-col items-center justify-center text-center font-mono text-[10px]">
+          <div class="text-base-content/70">
+            <span class="text-primary mr-1">@</span>
+            {currentZone()?.name ?? "—"}
+          </div>
+          <div class="text-base-content/45">
+            ({current().x}, {current().y}, {current().z})
+          </div>
         </div>
       </Match>
 
       <Match when={T() === "small"}>
-        <div class="h-full flex flex-col justify-center">
-          <MapAscii grid={MAP_GRID} class="font-mono text-[10px] leading-[12px] overflow-hidden" />
-          <div class="text-[10px] font-mono text-base-content/55 mt-1.5 flex justify-between">
-            <span>Ridgeline</span>
-            <span>(14,7)</span>
+        <Show when={map()} fallback={<MapEmpty />}>
+          <div class="h-full flex flex-col justify-center gap-1.5">
+            <MiniMap cells={cells()} cap="6.5rem" fontClass="text-[10px]" />
+            <div class="text-[10px] font-mono text-base-content/55 flex justify-between gap-2">
+              <span class="truncate">{currentZone()?.name ?? "Unknown"}</span>
+              <span class="shrink-0">
+                ({current().x},{current().y})
+              </span>
+            </div>
           </div>
-        </div>
+        </Show>
       </Match>
 
       <Match when={T() === "medium"}>
-        <div class="flex h-full gap-3">
-          <MapAscii
-            grid={MAP_GRID}
-            class="font-mono text-[12px] leading-[14px] flex-1 overflow-hidden bg-base-300/40 rounded p-2 text-base-content/70"
-          />
-          <dl class="text-[11px] space-y-1 w-28 shrink-0">
-            <Coord k="zone" v="Ridgeline" />
-            <Coord k="coords" v="(14,7)" />
-            <Coord k="biome" v="alpine" />
-            <Coord k="visited" v="62%" />
-          </dl>
-        </div>
+        <Show when={map()} fallback={<MapEmpty />}>
+          <div class="flex h-full gap-3 items-center">
+            <div class="flex-1 min-w-0">
+              <MiniMap cells={cells()} cap="8.5rem" fontClass="text-xs" />
+            </div>
+            <dl class="text-[11px] space-y-1 w-28 shrink-0">
+              <Coord k="zone" v={currentZone()?.name ?? "Unknown"} />
+              <Coord k="coords" v={coordStr()} />
+              <Coord k="danger" v={currentZone() ? String(currentZone()!.danger) : "—"} />
+              <Coord k="known" v={`${known()} zones`} />
+            </dl>
+          </div>
+        </Show>
       </Match>
 
       <Match when={true}>
-        <div class="flex h-full gap-4">
-          <MapAscii
-            grid={BIG_MAP}
-            class="font-mono text-[14px] leading-[15px] flex-1 overflow-hidden bg-base-300/40 rounded p-3 text-base-content/70"
-          />
-          <div class="w-40 shrink-0 flex flex-col gap-2">
-            <dl class="text-[11px] space-y-1">
-              <Coord k="zone" v="Ridgeline" />
-              <Coord k="coords" v="(14,7)" />
-              <Coord k="biome" v="alpine" />
-              <Coord k="visited" v="62%" />
-              <Coord k="danger" v="moderate" />
-              <Coord k="weather" v="windy" />
-            </dl>
-            <div class="border-t border-base-300/60 pt-2 mt-1 text-[11px] space-y-1">
-              <div class="text-[10px] uppercase tracking-wider text-base-content/45">legend</div>
-              <div class="flex items-center gap-2">
-                <span class="text-primary font-mono">@</span> <span>you</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="text-warning font-mono">◆</span> <span>point of interest</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="text-base-content/40 font-mono">█</span> <span>blocked</span>
+        <Show when={map()} fallback={<MapEmpty />}>
+          <div class="flex h-full gap-4 items-center">
+            <div class="flex-1 min-w-0">
+              <MiniMap cells={cells()} cap="11rem" fontClass="text-sm" />
+            </div>
+            <div class="w-40 shrink-0 flex flex-col gap-2">
+              <dl class="text-[11px] space-y-1">
+                <Coord k="zone" v={currentZone()?.name ?? "Unknown"} />
+                <Coord k="coords" v={coordStr()} />
+                <Coord k="danger" v={currentZone() ? String(currentZone()!.danger) : "—"} />
+                <Coord k="known" v={`${known()} discovered`} />
+              </dl>
+              <div class="border-t border-base-300/60 pt-2 mt-1 text-[11px] space-y-1">
+                <div class="text-[10px] uppercase tracking-wider text-base-content/45">legend</div>
+                <div class="flex items-center gap-2">
+                  <span class="text-primary font-mono">@</span> <span>you</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="inline-block size-3 rounded-sm bg-base-300/70" />{" "}
+                  <span>discovered (danger #)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="inline-block size-3 rounded-sm border border-dashed border-base-content/40" />{" "}
+                  <span>frontier</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </Show>
       </Match>
     </Switch>
   );
@@ -642,6 +698,15 @@ function LogCard(props: { span: Span }) {
   const tail = (n: number) => game.world.log.slice(-n);
   const latest = () => game.world.log[game.world.log.length - 1];
 
+  // Keep the newest line in view: scroll the list to the bottom whenever a line
+  // arrives (and on a tier change that (re)mounts the list).
+  let listEl: HTMLUListElement | undefined;
+  createEffect(() => {
+    game.world.log.length;
+    T();
+    if (listEl) listEl.scrollTop = listEl.scrollHeight;
+  });
+
   return (
     <Switch>
       <Match when={T() === "micro"}>
@@ -657,6 +722,7 @@ function LogCard(props: { span: Span }) {
 
       <Match when={true}>
         <ul
+          ref={listEl}
           class="font-mono h-full overflow-y-auto"
           style={{
             "font-size": T() === "small" ? "11px" : "12px",

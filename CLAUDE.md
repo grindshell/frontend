@@ -143,10 +143,14 @@ the client's visual language.
 - **Tiers**: each card `Body` switches on `tier(span)` (micro/small/medium/large by area) via
   `<Switch>/<Match>` so it re-flows live as it's resized. Keep new card bodies reactive the
   same way — don't early-return on a non-reactive read.
-- Card body data: the **Action, Inventory, Formation, and Activity Log** cards render live
+- Card body data: the **Action, Inventory, Formation, Map, and Activity Log** cards render live
   state from the game context (`world.action` / `world.inventory` / `world.roster` /
-  `world.log`); the **Map and Market** cards are still static placeholder content (their
-  surfaces aren't served yet — see §6).
+  `world.map` / `world.log`). The **Map** card shows a live 3×3 neighbourhood of the current
+  zone from `world.map` (the `mapView` push — it requests `listMap` when online, same as the
+  Area page; micro tier falls back to just the current zone, offline shows an empty state — no
+  invented biome/weather flavour). The **Activity Log** card auto-scrolls to the newest line
+  (`world.log` tail). Only the **Market** cards remain static placeholder content (markets
+  aren't served yet — see §6).
 
 ## 6. Data layer (server connection)
 
