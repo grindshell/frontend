@@ -1,29 +1,22 @@
 import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 import { useGame } from "../../lib/game-context";
-import type { FormationSlotView, UnitView } from "../../lib/protocol";
+import type { FormationSlotView } from "../../lib/protocol";
 import CellGrid, { type CellGridItem } from "../../components/CellGrid";
+import { GRID, SOFT_CAP, cellNumber, sizeMultiplier } from "../../lib/formation";
+import { UnitDetail } from "./UnitDetail";
 
 // The formation screen: a tabbed layout mirroring the Actions screen — a
 // signal-driven tab strip over a single scroll region (no nested scrollbars).
 // "Units" lists the roster (live from the authoritative `roster` push,
-// units.md) and drills into a unit's stats / resolved-skill inspector;
+// units.md) and drills into the two-column unit detail inspector
+// (UnitDetail.tsx — stats/skills, gear equip/unequip, metadata);
 // "Formation" is the grid editor over the authoritative `formation` snapshot
 // (formations.md "Editing the formation"). Editor edits are local until Save
 // sends the whole layout as one `setFormation` op — the server validates
 // atomically and either acks with the fresh snapshot or nacks in full.
-// Equip/unequip lives on the Inventory page.
 
 const TABS = ["Units", "Formation"] as const;
 type Tab = (typeof TABS)[number];
-
-const STAT_KEYS = [
-  ["str", "STR"],
-  ["vit", "VIT"],
-  ["dex", "DEX"],
-  ["agi", "AGI"],
-  ["int", "INT"],
-  ["wis", "WIS"],
-] as const;
 
 type UnitViewMode = "table" | "detail";
 
@@ -108,7 +101,8 @@ export function Formation() {
                   </Match>
                   <Match when={unitView() === "detail"}>
                     <UnitDetail
-                      unit={roster().find((u) => u.id === unitDetailId())}
+                      unitId={unitDetailId()}
+                      onSelect={setUnitDetailId}
                       onBack={() => setUnitView("table")}
                     />
                   </Match>
@@ -125,24 +119,9 @@ export function Formation() {
   );
 }
 
-/** The formation grid is 5x5 (formations.md "Layout"). */
-const GRID = 5;
-
-/** The soft cap on occupied cells; beyond it the size penalty applies
- * (formations.md "Formation size and diminishing returns"). */
-const SOFT_CAP = 5;
-
-/** The canon size multiplier for `n` occupied cells: 1 − 0.75·(excess/20)². */
-const sizeMultiplier = (n: number): number => {
-  const excess = Math.max(0, n - SOFT_CAP);
-  return 1 - 0.75 * (excess / 20) ** 2;
-};
-
-/** The processing-order number of cell (x, y): top-to-bottom, right-to-left —
- * cell 1 is (4, 0), cell 25 is (0, 4) (formations.md "Layout"). */
-const cellNumber = (x: number, y: number): number => (GRID - 1 - x) * GRID + y + 1;
-
-/** A formation cell as a CellGrid item — the gridstack grid renders these. */
+/** A formation cell as a CellGrid item — the gridstack grid renders these.
+ * Grid constants and the canon formulas live in lib/formation.ts, shared with
+ * the unit detail view. */
 interface GridSlot extends CellGridItem {
   /** Roster unit id at this cell. */
   unit: string;
@@ -398,139 +377,3 @@ function FormationEditor() {
   );
 }
 
-function UnitDetail(props: { unit: UnitView | undefined; onBack: () => void }) {
-  return (
-    <div class="flex flex-col gap-4">
-      <div>
-        <button class="btn btn-sm btn-ghost" onClick={() => props.onBack()}>
-          ← Back
-        </button>
-      </div>
-      <Show
-        when={props.unit}
-        fallback={<p class="text-center text-base-content/50">Unit not found.</p>}
-      >
-        {(u) => (
-          <div class="flex flex-col gap-4">
-            <div class="text-center">
-              <h2 class="text-2xl font-semibold">
-                {u().name}
-                <Show when={u().isPlayer}>
-                  <span class="badge badge-sm badge-soft ml-2 align-middle">player</span>
-                </Show>
-              </h2>
-              <Show when={u().title}>
-                <p class="text-base-content/60">{u().title}</p>
-              </Show>
-            </div>
-
-            <div class="max-w-md mx-auto w-full">
-              <p class="text-xs text-base-content/45 mb-1">
-                Stats <span class="text-base-content/35">// effective = trained + gear</span>
-              </p>
-              <table class="table table-sm">
-                <thead class="text-base-content/60">
-                  <tr>
-                    <th>Stat</th>
-                    <th class="text-right">Trained</th>
-                    <th class="text-right">Effective</th>
-                  </tr>
-                </thead>
-                <tbody class="font-mono">
-                  <For each={STAT_KEYS}>
-                    {([k, label]) => (
-                      <tr>
-                        <td>{label}</td>
-                        <td class="text-right">{u().trained[k]}</td>
-                        <td class="text-right">
-                          {u().effective[k]}
-                          <Show when={u().effective[k] !== u().trained[k]}>
-                            <span class="text-success ml-1">
-                              (+{u().effective[k] - u().trained[k]})
-                            </span>
-                          </Show>
-                        </td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-            </div>
-
-            <div class="max-w-md mx-auto w-full">
-              <p class="text-xs text-base-content/45 mb-1">
-                Skills{" "}
-                <span class="text-base-content/35">// in processing order — first runs first</span>
-              </p>
-              <Show
-                when={(u().resolvedSkills ?? []).length > 0}
-                fallback={<p class="text-sm text-base-content/40">No active skills.</p>}
-              >
-                <ul class="text-sm divide-y divide-base-300/40">
-                  <For each={u().resolvedSkills}>
-                    {(s, i) => (
-                      <li class="py-1.5">
-                        <div class="flex items-baseline gap-2">
-                          <span class="font-mono text-[10px] text-base-content/35 w-4 shrink-0 text-right">
-                            {i() + 1}
-                          </span>
-                          <span class="min-w-0 flex-1 truncate">{s.name}</span>
-                          <Show when={s.conflict}>
-                            <span
-                              class="badge badge-xs badge-warning badge-soft shrink-0"
-                              title="Conflicting priority overrides — fell back to the default order."
-                            >
-                              conflict
-                            </span>
-                          </Show>
-                          <Show when={s.unregistered}>
-                            <span
-                              class="badge badge-xs badge-ghost shrink-0"
-                              title="No registry entry — processes last."
-                            >
-                              unregistered
-                            </span>
-                          </Show>
-                          <span class="font-mono text-base-content/70 shrink-0">{s.value}</span>
-                        </div>
-                        <Show when={s.description}>
-                          <p class="text-xs text-base-content/50 pl-6 mt-0.5">{s.description}</p>
-                        </Show>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </Show>
-            </div>
-
-            <div class="max-w-md mx-auto w-full">
-              <p class="text-xs text-base-content/45 mb-1">
-                Equipment <span class="text-base-content/35">// manage on the Inventory page</span>
-              </p>
-              <Show
-                when={u().equipment.length > 0}
-                fallback={<p class="text-sm text-base-content/40">Nothing equipped.</p>}
-              >
-                <ul class="text-sm divide-y divide-base-300/40">
-                  <For each={u().equipment}>
-                    {(g) => (
-                      <li class="flex items-center gap-2 py-1">
-                        <span class="font-mono text-[10px] uppercase tracking-wider text-base-content/45 w-16 shrink-0">
-                          {g.slot}
-                        </span>
-                        <span class="truncate min-w-0 flex-1">{g.name}</span>
-                        <span class="font-mono text-[11px] text-base-content/50">
-                          gs {g.gearScore}
-                        </span>
-                      </li>
-                    )}
-                  </For>
-                </ul>
-              </Show>
-            </div>
-          </div>
-        )}
-      </Show>
-    </div>
-  );
-}

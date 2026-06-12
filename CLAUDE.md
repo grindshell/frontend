@@ -111,8 +111,15 @@ dist/                 Vite build output (gitignored)
   `/` Overview · `/actions` · `/area` · `/formation` · `/inventory` · `/global-market` ·
   `/profile` · `/rankings` · `/time-tracker` · `/resource-editor` · `/about` · `/settings`.
 - **Page fidelity**: pages backed by live server state render it for real — Actions
-  (idle combat + travel), Inventory (holdings/gear/effects), Formation (the roster, each unit's
-  resolved-skill build inspector, and the live 5x5 grid editor over the `formation`
+  (idle combat + travel), Inventory (holdings/gear/effects), Formation (the roster, the
+  two-column [unit detail inspector](src/pages/game/UnitDetail.tsx) — prev/next roster paging,
+  generated 8×8 pixel portraits ([PixelPortrait](src/components/PixelPortrait.tsx), the
+  canon-pinned placeholder derivation of content-format.md "Portraits and visual identity",
+  seeded `unit:<id>` / `gear:<template>` / `skill:<id>`), a left section list expanding
+  Stats & Skills (contribution-matrix hover text — stats.md keeps stats label-free, so no
+  invented flavor; click a skill for the lower info view) / Gear (stacked equipped/inventory
+  with drag-to-equip/unequip over the real ops) / Metadata (placeholder, wire doesn't serve
+  it) into the right column — and the live 5x5 grid editor over the `formation`
   snapshot — on the shared `CellGrid`/Gridstack grid, drag to move/swap), Area (the zone map:
   the discovered/frontier gridmap over that same shared grid, with clickable adjacent travel),
   chat, and self-contained
@@ -191,7 +198,10 @@ serves **today**:
   optimistically — the ack rides with fresh inventory + roster snapshots. `GearView.requirements`
   lets the client preview equippability with the **cheap stat check only** (vs trained levels;
   items.md — the server is authoritative and the script hook is never previewed). Rendered by
-  the Inventory page's gear section + Units & equipment panel.
+  the Inventory page's gear section + Units & equipment panel, and by the unit detail view's
+  Gear section (drag between the equipped/inventory zones, or the detail-panel buttons). The
+  stat display helpers are shared in [lib/stats.ts](src/lib/stats.ts); formation-grid canon
+  constants in [lib/formation.ts](src/lib/formation.ts).
 
 - **Consumables & formation effects** (INVENTORY_IMPL.md Phase 3): the `useConsumable` op
   applies a consumable's Zone Effect to the player's own formation (the only `target` the server
@@ -216,9 +226,15 @@ serves **today**:
   its one-step frontier), each flagged `discovered`. The client replaces `world.map` wholesale; the
   [Area page](src/pages/game/Area.tsx) renders it on the shared `CellGrid` (Gridstack — the same
   component the editor's tile map uses, [components/CellGrid.tsx](src/components/CellGrid.tsx)) one
-  X/Y plane at a time with a Z toggle, and clicking an adjacent authored zone starts a travel action
-  (reusing the existing `changeAction:travel`). Frontier zones carry the same name + danger the
-  travel destination picker exposes.
+  X/Y plane at a time with a Z toggle. Clicking a zone **only selects** it — the selected zone's
+  details surface in the side panel (name, position, discovered/frontier/current status, danger),
+  with a Travel button when it's an adjacent destination; clicking empty space clears the
+  selection, and arriving at a new zone clears it too. A left-drag anywhere — **including on a
+  zone tile** — pans the viewport (the map uses CellGrid's `panMode`, since zones aren't
+  rearrangeable; a plain `disableDrag` would only pan from empty cells); a click without a drag
+  still selects, gated by CellGrid's pan threshold. Travel is started only from the explicit
+  buttons (the selected-zone card or the destination list), reusing `changeAction:travel`.
+  Frontier zones carry the same name + danger the travel destination picker exposes.
 
 **Not present on the wire** (so not modeled here): zone/world consumable
 scopes, harvesting/crafting actions, markets, profile/rankings. When those land, add their message

@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { useGame } from "../../lib/game-context";
-import type { GearView, ItemStackView, UnitStatsView, UnitView } from "../../lib/protocol";
+import type { ItemStackView } from "../../lib/protocol";
+import { STAT_KEYS, failingReqs, statsSummary } from "../../lib/stats";
 
 // The inventory screen: the player's committed holdings (inventory.md), live
 // from the server's authoritative `inventory` push, plus the gear/equipment
@@ -139,29 +140,6 @@ export function Inventory() {
     </section>
   );
 }
-
-const STAT_KEYS = [
-  ["str", "STR"],
-  ["vit", "VIT"],
-  ["dex", "DEX"],
-  ["agi", "AGI"],
-  ["int", "INT"],
-  ["wis", "WIS"],
-] as const;
-
-/** "+2 STR, +1 INT" — only the nonzero stats of a gear piece. */
-const statsSummary = (s: UnitStatsView): string =>
-  STAT_KEYS.filter(([k]) => s[k] !== 0)
-    .map(([k, label]) => `${s[k] > 0 ? "+" : ""}${s[k]} ${label}`)
-    .join(", ");
-
-/** The cheap stat-check preview (items.md "Gear requirements"): which of the
- * piece's minimums the unit's TRAINED levels fail. The authoritative check —
- * including the eventual `on_gear_equip_check` hook — is the server's. */
-const failingReqs = (g: GearView, unit: UnitView): string[] =>
-  STAT_KEYS.filter(([k]) => g.requirements[k] > 0 && unit.trained[k] < g.requirements[k]).map(
-    ([k, label]) => `${label} ${g.requirements[k]}`,
-  );
 
 /** Unequipped gear (with equip controls) and the per-unit equipment panel,
  * both live over the authoritative inventory + roster pushes. */

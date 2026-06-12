@@ -15,8 +15,9 @@ import CellGrid from "../../components/CellGrid";
 // the 3D gridmap plus its one-step frontier, streamed from the backend
 // (`listMap` → `mapView`). Rendered on the shared Gridstack `CellGrid` (the same
 // component the editor's tile map uses), one X/Y plane at a time with a Z
-// toggle. Clicking an adjacent authored zone starts a travel action toward it
-// (reusing `changeAction:travel`); the side panel lists every legal destination
+// toggle. Clicking a zone SELECTS it — its details surface in the side panel,
+// with a Travel button when the zone is an adjacent destination. The map click
+// never starts travel itself; the side panel also lists every legal destination
 // (including up/down) as explicit buttons. The map needs live server state, so
 // offline it shows an empty state rather than invented zones (frontend CLAUDE.md §6).
 
@@ -78,8 +79,14 @@ export function Area() {
     setOffsetY(-c.y - Math.floor(ROWS / 2));
   };
 
-  // Re-center the viewport (and follow Z) whenever the player moves to a new zone.
-  createEffect(on(currentKey, () => recenter()));
+  // Re-center the viewport (and follow Z) whenever the player moves to a new
+  // zone; a fresh zone also clears any now-stale selection.
+  createEffect(
+    on(currentKey, () => {
+      recenter();
+      setSelectedKey(null);
+    }),
+  );
 
   const items = createMemo<MapItem[]>(() => {
     const m = map();
@@ -147,15 +154,10 @@ export function Area() {
   const onCellClick = (absX: number, absY: number) => {
     const key = `${absX},${-absY},${viewZ()}`;
     const z = map()?.zones.find((zz) => zz.pos === key);
-    if (!z) {
-      setSelectedKey(null);
-      return;
-    }
-    setSelectedKey(key);
-    // Clicking an adjacent authored zone travels there (the chosen design):
-    // the direction comes from the destination listing.
-    const dest = destinationAt(key);
-    if (dest) game.startTravel(dest.direction);
+    // Clicking only SELECTS a zone — its details (and a Travel button, when the
+    // zone is an adjacent destination) surface in the side panel. Clicking empty
+    // space clears the selection. Travel never fires from the map click itself.
+    setSelectedKey(z ? key : null);
   };
 
   const inFlightTravel = () =>
@@ -207,7 +209,11 @@ export function Area() {
         }
       >
         <div class="grow flex gap-4 overflow-hidden">
-          {/* The grid plane */}
+          {/* The grid plane. `panMode`: zones aren't rearrangeable, so a
+              left-drag anywhere — including on a zone tile — pans the viewport
+              (a plain `disableDrag` would let pan start only on empty cells,
+              and dragging a zone would do nothing). A click without a drag
+              still selects, gated by CellGrid's pan threshold. */}
           <div class="grow rounded-box bg-base-200/40 overflow-hidden min-w-0">
             <CellGrid
               items={items()}
@@ -222,7 +228,7 @@ export function Area() {
               }}
               selectedPos={selectedPos()}
               renderItem={renderZone}
-              disableDrag
+              panMode
             />
           </div>
 
@@ -250,43 +256,50 @@ export function Area() {
             </div>
 
             <Show when={selectedZone()} keyed>
-              {(z) => (
-                <Show when={z.pos !== currentKey()}>
-                  <div class="rounded-box bg-base-200 p-3 flex flex-col gap-2">
+              {(z) => {
+                const isHere = () => z.pos === currentKey();
+                return (
+                  <div class="rounded-box bg-base-200 p-3 flex flex-col gap-2 ring-1 ring-primary/40">
                     <div class="flex items-center justify-between">
                       <span class="text-[0.65rem] uppercase tracking-wide text-base-content/50">
-                        {z.discovered ? "Discovered" : "Unexplored"}
+                        Selected ·{" "}
+                        {isHere() ? "Current" : z.discovered ? "Discovered" : "Unexplored"}
                       </span>
                       <span class={`badge badge-sm ${dangerClass(z.danger)}`}>
                         danger {z.danger}
                       </span>
                     </div>
                     <div class="font-semibold leading-tight">{z.name}</div>
-                    <div class="text-xs text-base-content/60 font-mono">
-                      {z.pos}
-                    </div>
+                    <div class="text-xs text-base-content/60 font-mono">{z.pos}</div>
                     <Show
-                      when={destinationAt(z.pos)}
+                      when={!isHere()}
                       fallback={
-                        <p class="text-[0.7rem] text-base-content/45">
-                          {z.discovered
-                            ? "Not adjacent — travel one zone at a time."
-                            : "On the frontier. Reach a neighbour first."}
-                        </p>
+                        <p class="text-[0.7rem] text-base-content/45">You are standing here.</p>
                       }
                     >
-                      {(dest) => (
-                        <button
-                          class="btn btn-sm btn-primary"
-                          onClick={() => game.startTravel(dest().direction)}
-                        >
-                          Travel {DIR_LABEL[dest().direction].toLowerCase()} →
-                        </button>
-                      )}
+                      <Show
+                        when={destinationAt(z.pos)}
+                        fallback={
+                          <p class="text-[0.7rem] text-base-content/45">
+                            {z.discovered
+                              ? "Not adjacent — travel one zone at a time."
+                              : "On the frontier. Reach a neighbour first."}
+                          </p>
+                        }
+                      >
+                        {(dest) => (
+                          <button
+                            class="btn btn-sm btn-primary"
+                            onClick={() => game.startTravel(dest().direction)}
+                          >
+                            Travel {DIR_LABEL[dest().direction].toLowerCase()} →
+                          </button>
+                        )}
+                      </Show>
                     </Show>
                   </div>
-                </Show>
-              )}
+                );
+              }}
             </Show>
 
             <div class="rounded-box bg-base-200 p-3">
