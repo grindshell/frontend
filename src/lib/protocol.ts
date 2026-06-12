@@ -199,16 +199,28 @@ export type XpGainView = {
   levelAfter: number;
 };
 
+/** One accrued unit of Knowledge (`KnowledgeGainView`, knowledge.md): the
+ * running total the action built toward a content entity, keyed by a namespaced
+ * id (`"zone:1,0,0"`) with a player-facing `label` (the zone name). Account-
+ * level, so one entry per entity (not per unit). */
+export type KnowledgeGainView = {
+  key: string;
+  label: string;
+  amount: number;
+};
+
 /** An idle action's accrued (or final) reward tally (`RewardsView`). Gear
  * drops ride `items` as ordinary stacks (`kind === "gear"`); unique instances
  * are minted server-side when the tally commits. `experience` is the use-based
- * XP accrued this action (omitted while empty). */
+ * XP accrued this action; `knowledge` is the account-level Knowledge it built
+ * (today: travel's destination-zone knowledge). Both omitted while empty. */
 export type RewardsView = {
   kills: number;
   currencies: CurrenciesView;
   general: GeneralResourcesView;
   items: ItemStackView[];
   experience?: XpGainView[];
+  knowledge?: KnowledgeGainView[];
 };
 
 /** The six unit/gear stats (`UnitStatsView`, stats.md "Unit and gear stats"). */

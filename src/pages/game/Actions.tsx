@@ -12,6 +12,7 @@ import type {
   ActionStatsView,
   ActionView,
   Direction,
+  KnowledgeGainView,
   RewardsView,
   XpGainView,
 } from "../../lib/protocol";
@@ -493,11 +494,17 @@ function CurrentTravel(props: { act: ActionView }) {
         />
       </div>
 
-      <Show when={(props.act.tally.experience ?? []).length > 0}>
+      <Show
+        when={
+          (props.act.tally.experience ?? []).length > 0 ||
+          (props.act.tally.knowledge ?? []).length > 0
+        }
+      >
         <div class="flex flex-col gap-1">
-          <span class="text-xs text-base-content/55">Experience this journey</span>
+          <span class="text-xs text-base-content/55">Gained this journey</span>
           <div class="flex flex-wrap gap-1">
             <XpBadges experience={props.act.tally.experience} />
+            <KnowledgeBadges knowledge={props.act.tally.knowledge} />
           </div>
         </div>
       </Show>
@@ -585,6 +592,19 @@ function XpBadges(props: { experience?: XpGainView[] }) {
   );
 }
 
+/** Per-entity Knowledge badges (knowledge.md): "🧭 +7 Rust Flats". */
+function KnowledgeBadges(props: { knowledge?: KnowledgeGainView[] }) {
+  return (
+    <For each={props.knowledge ?? []}>
+      {(k) => (
+        <span class="badge badge-sm badge-soft">
+          🧭 +{k.amount} {k.label}
+        </span>
+      )}
+    </For>
+  );
+}
+
 function TallyBadges(props: { tally: RewardsView }) {
   const c = () => props.tally.currencies;
   return (
@@ -612,6 +632,7 @@ function TallyBadges(props: { tally: RewardsView }) {
         )}
       </For>
       <XpBadges experience={props.tally.experience} />
+      <KnowledgeBadges knowledge={props.tally.knowledge} />
     </div>
   );
 }
@@ -669,11 +690,17 @@ function RewardView() {
             ? `You never set out for ${r().targetName}.`
             : `You have reached ${r().targetName}.`}
         </p>
-        <Show when={(r().rewards.experience ?? []).length > 0}>
+        <Show
+          when={
+            (r().rewards.experience ?? []).length > 0 ||
+            (r().rewards.knowledge ?? []).length > 0
+          }
+        >
           <div class="bg-base-200/40 rounded-box p-4">
-            <p class="text-xs text-base-content/45 mb-2">Experience gained</p>
+            <p class="text-xs text-base-content/45 mb-2">Gained on the journey</p>
             <div class="flex justify-center flex-wrap gap-1">
               <XpBadges experience={r().rewards.experience} />
+              <KnowledgeBadges knowledge={r().rewards.knowledge} />
             </div>
           </div>
         </Show>

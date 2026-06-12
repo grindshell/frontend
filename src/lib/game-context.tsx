@@ -119,6 +119,10 @@ export type InventoryState = {
 export const totalXp = (r: RewardsView): number =>
   (r.experience ?? []).reduce((sum, e) => sum + e.amount, 0);
 
+/** Total Knowledge accrued across a tally's per-entity gains. */
+export const totalKnowledge = (r: RewardsView): number =>
+  (r.knowledge ?? []).reduce((sum, k) => sum + k.amount, 0);
+
 /** The level-ups a committed tally produced, as "STR 1→2" labels (progression.md).
  * Only meaningful on the final `actionRewards` — per-tick gains carry level 0. */
 export const levelUps = (r: RewardsView): string[] =>
@@ -135,6 +139,8 @@ export const summarizeRewards = (r: RewardsView): string => {
   for (const s of r.items) parts.push(`${s.qty}× ${s.name}`);
   const xp = totalXp(r);
   if (xp > 0) parts.push(`${xp} xp`);
+  const kn = totalKnowledge(r);
+  if (kn > 0) parts.push(`${kn} knowledge`);
   return parts.join(", ");
 };
 
@@ -440,12 +446,17 @@ export function GameProvider(props: ParentProps) {
         });
         if (msg.kind === "travel") {
           // Travel's only loot is arrival (or, when stopped, no movement at
-          // all), but it banks use-based XP along the way (progression.md).
+          // all), but it banks use-based XP and zone Knowledge along the way
+          // (progression.md / knowledge.md).
           const xp = totalXp(msg.rewards);
+          const kn = totalKnowledge(msg.rewards);
           const arrival = msg.stopped
             ? `Abandoned the journey to ${msg.targetName}.`
             : `Arrived at ${msg.targetName}.`;
-          pushLog(xp > 0 ? `${arrival} (+${xp} xp)` : arrival, "reward");
+          const bits: string[] = [];
+          if (xp > 0) bits.push(`+${xp} xp`);
+          if (kn > 0) bits.push(`+${kn} ${msg.targetName} knowledge`);
+          pushLog(bits.length ? `${arrival} (${bits.join(", ")})` : arrival, "reward");
         } else {
           pushLog(
             `${msg.stopped ? "Stopped" : "Finished"} ${msg.kind} vs ${msg.targetName}: ` +
