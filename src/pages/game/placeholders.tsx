@@ -2,15 +2,8 @@ import { PagePlaceholder } from "./PagePlaceholder";
 
 // Routes whose real content depends on the live game data layer that isn't
 // ported yet. Each is a themed "not yet wired" page (see CLAUDE.md §6) rather
-// than invented game data.
-
-export const Area = () => (
-  <PagePlaceholder
-    title="Area"
-    icon="MapPin"
-    blurb="The zone map, points of interest, and what's around you will live here once world state streams in."
-  />
-);
+// than invented game data. (The Area/map page graduated to live data — see
+// pages/game/Area.tsx.)
 
 export const GlobalMarket = () => (
   <PagePlaceholder

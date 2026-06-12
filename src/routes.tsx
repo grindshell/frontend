@@ -1,12 +1,12 @@
 import type { RouteDefinition } from "@solidjs/router";
 import { Overview } from "./pages/game/overview/Overview";
 import { Actions } from "./pages/game/Actions";
+import { Area } from "./pages/game/Area";
 import { Formation } from "./pages/game/Formation";
 import { Inventory } from "./pages/game/Inventory";
 import { Settings } from "./pages/game/Settings";
 import { About } from "./pages/game/About";
 import {
-  Area,
   GlobalMarket,
   Profile,
   Rankings,

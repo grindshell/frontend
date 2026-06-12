@@ -16,7 +16,8 @@
 // each unit's resolved merged skill list for the build inspector, skills.md
 // §"Player visibility"), consumables + formation-scoped zone effects, and
 // formation editing (the layout snapshot + the whole-layout `setFormation`
-// op). The exact message
+// op), and the zone map (`listMap` → `mapView`, the discovered/frontier
+// gridmap). The exact message
 // envelope is owned by the backend/client and is not frozen in canon —
 // accounts.md fixes the *behavior* of the connect-time state push, not its
 // wire shape — so this mirrors the backend's current implementation and moves
@@ -69,6 +70,9 @@ export type GameData =
   // neighbours). Answered with a `destinationList` push, cached per zone like
   // `listEnemies`.
   | { gt: "listDestinations" }
+  // The player's zone map (zones-and-travel.md "Map visibility"): the discovered
+  // zones plus their one-step frontier. Answered with a `mapView` push.
+  | { gt: "listMap" }
   | { gt: "changeAction"; kind: "combat"; enemy: string; kc: number }
   // Travel to the adjacent zone in `direction` (zones-and-travel.md "Travel").
   // Unlike combat it takes no KC — the engine computes the tick cost from the
@@ -157,6 +161,19 @@ export type DestinationInfo = {
   position: string;
   name: string;
   danger: number;
+};
+
+/** One zone on the player's map (`MapZoneInfo`, zones-and-travel.md "Map
+ * visibility"). A `discovered` zone is one the player has Knowledge of (or is
+ * standing in / their spawn); a non-discovered entry is a **frontier** zone —
+ * an authored neighbour of a discovered zone, shown so the player can see there
+ * is somewhere to go but flagged as not-yet-explored. */
+export type MapZoneInfo = {
+  /** The zone's grid position ("x,y,z"). */
+  pos: string;
+  name: string;
+  danger: number;
+  discovered: boolean;
 };
 
 /** The three numeric currencies (`CurrenciesView`, resources.md "Resource
@@ -398,6 +415,11 @@ export type ServerMessage =
   // The answer to `listDestinations`: the adjacent authored zones reachable
   // from `from`. Cached client-side per zone.
   | { t: "destinationList"; from: string; destinations: DestinationInfo[] }
+  // The answer to `listMap`: the player's zone map (zones-and-travel.md "Map
+  // visibility"). `current` is the zone the player stands in; `zones` is every
+  // visible zone — the discovered region plus its one-step frontier — each
+  // flagged `discovered`. The client REPLACES its map from this.
+  | { t: "mapView"; current: string; zones: MapZoneInfo[] }
   // The per-tick delta for the in-flight action, batched at the end of the
   // global tick. `phase` is the lifecycle phase this tick executed; absent
   // fields are unchanged and fold over the `gameState` baseline. The delta is

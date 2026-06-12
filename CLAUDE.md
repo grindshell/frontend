@@ -111,11 +111,14 @@ dist/                 Vite build output (gitignored)
   `/` Overview · `/actions` · `/area` · `/formation` · `/inventory` · `/global-market` ·
   `/profile` · `/rankings` · `/time-tracker` · `/resource-editor` · `/about` · `/settings`.
 - **Page fidelity**: pages backed by live server state render it for real — Actions
-  (idle combat), Inventory (holdings/gear/effects), Formation (the roster, each unit's
+  (idle combat + travel), Inventory (holdings/gear/effects), Formation (the roster, each unit's
   resolved-skill build inspector, and the live 5x5 grid editor over the `formation`
-  snapshot), chat, and self-contained pages (About, theme Settings). Pages whose backing surface the backend doesn't serve yet (area,
-  markets, …) are **themed placeholders** (`PagePlaceholder`) — they are intentionally
-  not faked with invented game data. Don't invent server/state shapes; see §6 and §7.
+  snapshot — on the shared `CellGrid`/Gridstack grid, drag to move/swap), Area (the zone map:
+  the discovered/frontier gridmap over that same shared grid, with clickable adjacent travel),
+  chat, and self-contained
+  pages (About, theme Settings). Pages whose backing surface the backend doesn't serve yet
+  (markets, profile/rankings, …) are **themed placeholders** (`PagePlaceholder`) — they are
+  intentionally not faked with invented game data. Don't invent server/state shapes; see §6 and §7.
 
 ## 5. The Overview card system
 
@@ -208,8 +211,17 @@ serves **today**:
   take effect at the next Preparation (the in-flight action keeps its cached stats). The
   Formation page's grid editor renders it (right column = the leading side, per canon).
 
+- **Zone map** (zones-and-travel.md "Map visibility"): the `listMap` request is answered with a
+  `mapView` push — the player's `current` zone plus every visible zone (the discovered region and
+  its one-step frontier), each flagged `discovered`. The client replaces `world.map` wholesale; the
+  [Area page](src/pages/game/Area.tsx) renders it on the shared `CellGrid` (Gridstack — the same
+  component the editor's tile map uses, [components/CellGrid.tsx](src/components/CellGrid.tsx)) one
+  X/Y plane at a time with a Z toggle, and clicking an adjacent authored zone starts a travel action
+  (reusing the existing `changeAction:travel`). Frontier zones carry the same name + danger the
+  travel destination picker exposes.
+
 **Not present on the wire** (so not modeled here): zone/world consumable
-scopes, travel/area, harvesting/crafting actions, markets. When those land, add their message
+scopes, harvesting/crafting actions, markets, profile/rankings. When those land, add their message
 variants to `protocol.ts` and grow the context; until then those pages stay on local placeholder
 data.
 

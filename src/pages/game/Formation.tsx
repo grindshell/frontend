@@ -1,6 +1,7 @@
-import { For, Index, Match, Show, Switch, createEffect, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 import { useGame } from "../../lib/game-context";
 import type { FormationSlotView, UnitView } from "../../lib/protocol";
+import CellGrid, { type CellGridItem } from "../../components/CellGrid";
 
 // The formation screen: a tabbed layout mirroring the Actions screen — a
 // signal-driven tab strip over a single scroll region (no nested scrollbars).
@@ -141,14 +142,42 @@ const sizeMultiplier = (n: number): number => {
  * cell 1 is (4, 0), cell 25 is (0, 4) (formations.md "Layout"). */
 const cellNumber = (x: number, y: number): number => (GRID - 1 - x) * GRID + y + 1;
 
-/** The grid editor (formations.md "Editing the formation"): drag a unit (from a
- * cell or the bench) onto a cell to move it; dropping on an occupied cell swaps
- * the two (or displaces the occupant to the bench when dragging from the
- * bench); drag a placed unit back onto the bench to remove it. Click-to-place
- * (click a unit, then a cell) stays as the tap/keyboard path. Edits stay local
- * until Save sends the whole layout; the server's snapshot (which the ack rides
- * with) re-baselines the view. The right-most column is the leading side
- * (formations.md "Visual presentation"). */
+/** A formation cell as a CellGrid item — the gridstack grid renders these. */
+interface GridSlot extends CellGridItem {
+  /** Roster unit id at this cell. */
+  unit: string;
+  /** Display name. */
+  name: string;
+  /** Processing-order number (formations.md "Layout"). */
+  num: number;
+}
+
+/** Render one occupied formation cell: the unit name + its processing-order
+ * number. Empty cells are just the grid backdrop — CellGrid renders only
+ * occupied cells. */
+function renderSlot(slot: GridSlot, container: HTMLDivElement) {
+  container.classList.add("bg-base-300", "text-base-content");
+  const num = document.createElement("span");
+  num.className =
+    "absolute top-0.5 right-1 text-[9px] font-mono text-base-content/30 pointer-events-none";
+  num.textContent = String(slot.num);
+  const name = document.createElement("span");
+  name.className =
+    "text-xs leading-tight break-all line-clamp-2 pointer-events-none";
+  name.textContent = slot.name;
+  container.appendChild(num);
+  container.appendChild(name);
+}
+
+/** The grid editor (formations.md "Editing the formation"), rendered on the
+ * shared Gridstack `CellGrid` (the same component the Area map and the editor's
+ * formation tester use). Drag a placed unit onto another cell to move it;
+ * dropping on an occupied cell swaps the two. Click a bench unit to select it,
+ * then click a cell to place it; click a placed unit to select it (then Remove,
+ * or click an empty cell to move it). Edits stay local until Save sends the
+ * whole layout as one `setFormation` op — the server validates atomically and
+ * either acks with the fresh snapshot or nacks in full. The right-most column
+ * is the leading side (formations.md "Visual presentation"). */
 function FormationEditor() {
   const game = useGame();
   const roster = () => game.world.roster ?? [];
@@ -159,14 +188,6 @@ function FormationEditor() {
   const [selected, setSelected] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-
-  // Drag-and-drop state (native HTML5 DnD, the same pattern the Overview cards
-  // use): the unit being dragged, where it came from, the hovered cell index,
-  // and whether the bench is the hovered drop target (for removal).
-  const [dragUnit, setDragUnit] = createSignal<string | null>(null);
-  const [dragFrom, setDragFrom] = createSignal<"grid" | "bench" | null>(null);
-  const [dropCell, setDropCell] = createSignal<number | null>(null);
-  const [benchHot, setBenchHot] = createSignal(false);
 
   const slots = () => draft() ?? server() ?? [];
   const dirty = () => draft() !== null;
@@ -190,9 +211,10 @@ function FormationEditor() {
   };
 
   // Move a unit onto cell (x, y): an empty target moves it there; an occupied
-  // target swaps when the dragged unit came from the grid (the occupant takes
-  // the source cell) or displaces the occupant to the bench when it came from
-  // the bench (no source cell). The single edit path for both click and drag.
+  // target swaps when the unit is already on the grid (the occupant takes the
+  // source cell), or displaces the occupant to the bench when the unit came
+  // from the bench (no source cell). The single edit path for both gridstack
+  // drag (onItemMove) and click-to-place.
   const moveUnitTo = (unit: string, x: number, y: number) => {
     const occ = occupant(x, y);
     if (occ?.unit === unit) return; // dropped on its own cell — no-op
@@ -205,19 +227,21 @@ function FormationEditor() {
     });
   };
 
+  // Click a cell: with a unit selected (from the bench or the grid), place/move
+  // it here; otherwise select the cell's occupant (if any).
   const clickCell = (x: number, y: number) => {
     const sel = selected();
     const occ = occupant(x, y);
-    if (!sel) {
-      if (occ) setSelected(occ.unit);
-      return;
-    }
-    if (occ?.unit === sel) {
+    if (sel) {
+      if (occ?.unit === sel) {
+        setSelected(null);
+        return;
+      }
+      moveUnitTo(sel, x, y);
       setSelected(null);
       return;
     }
-    moveUnitTo(sel, x, y);
-    setSelected(null);
+    if (occ) setSelected(occ.unit);
   };
 
   const removeUnit = (unit: string) => edit((cur) => cur.filter((s) => s.unit !== unit));
@@ -229,48 +253,24 @@ function FormationEditor() {
     setSelected(null);
   };
 
-  // ---- drag-and-drop ----
-  const startDrag = (unit: string, from: "grid" | "bench", e: DragEvent) => {
-    setSelected(null); // a drag supersedes any pending click-selection
-    setDragUnit(unit);
-    setDragFrom(from);
-    e.dataTransfer!.effectAllowed = "move";
-    e.dataTransfer!.setData("text/plain", unit);
-  };
+  // The placed slots as CellGrid items (x/y map straight to grid column/row, so
+  // the right-most column renders as the leading side — no inversion).
+  const items = (): GridSlot[] =>
+    slots().map((s) => ({
+      x: s.x,
+      y: s.y,
+      unit: s.unit,
+      name: unitName(s.unit),
+      num: cellNumber(s.x, s.y),
+    }));
 
-  const endDrag = () => {
-    setDragUnit(null);
-    setDragFrom(null);
-    setDropCell(null);
-    setBenchHot(false);
-  };
-
-  const overCell = (i: number, e: DragEvent) => {
-    if (!dragUnit()) return;
-    e.preventDefault();
-    e.dataTransfer!.dropEffect = "move";
-    if (dropCell() !== i) setDropCell(i);
-  };
-
-  const dropOnCell = (x: number, y: number, e: DragEvent) => {
-    e.preventDefault();
-    const unit = dragUnit() ?? e.dataTransfer?.getData("text/plain") ?? "";
-    if (unit) moveUnitTo(unit, x, y);
-    endDrag();
-  };
-
-  const overBench = (e: DragEvent) => {
-    if (!dragUnit() || dragFrom() !== "grid") return; // only placed units bench
-    e.preventDefault();
-    e.dataTransfer!.dropEffect = "move";
-    setBenchHot(true);
-  };
-
-  const dropOnBench = (e: DragEvent) => {
-    e.preventDefault();
-    const unit = dragUnit();
-    if (unit && dragFrom() === "grid") removeUnit(unit);
-    endDrag();
+  // The selected unit's cell, for the accent highlight (null when it's a bench
+  // unit not yet placed).
+  const selectedPos = () => {
+    const sel = selected();
+    if (!sel) return null;
+    const p = placed(sel);
+    return p ? { x: p.x, y: p.y } : null;
   };
 
   const save = () => {
@@ -313,55 +313,16 @@ function FormationEditor() {
           <span class="text-base-content/70 font-mono tracking-wider">front →</span>
         </div>
 
-        <div class="grid grid-cols-5 gap-1.5">
-          <Index each={Array.from({ length: GRID * GRID })}>
-            {(_, i) => {
-              // Row-major render: i = y * GRID + x, left-to-right per row.
-              const x = i % GRID;
-              const y = Math.floor(i / GRID);
-              const occ = () => occupant(x, y);
-              const isSelected = () => !!occ() && occ()!.unit === selected();
-              const isDragSource = () => !!occ() && occ()!.unit === dragUnit();
-              const isDropHot = () => dropCell() === i && occ()?.unit !== dragUnit();
-              return (
-                <button
-                  class="aspect-square rounded-sm border text-center relative flex flex-col items-center justify-center p-1 transition-colors"
-                  classList={{
-                    "bg-base-300 border-base-content/20": !!occ() && !isSelected(),
-                    "bg-primary/20 border-primary ring-1 ring-primary": isSelected(),
-                    "bg-base-200/40 border-base-300": !occ(),
-                    "hover:bg-base-300/50": !occ() && !dragUnit(),
-                    "ring-2 ring-accent": isDropHot(),
-                    "opacity-40": isDragSource(),
-                    "cursor-grab": !!occ(),
-                    "cursor-pointer": !occ() && selected() !== null,
-                  }}
-                  draggable={!!occ()}
-                  onDragStart={(e) => {
-                    if (occ()) startDrag(occ()!.unit, "grid", e);
-                  }}
-                  onDragOver={(e) => overCell(i, e)}
-                  onDragLeave={() => {
-                    if (dropCell() === i) setDropCell(null);
-                  }}
-                  onDrop={(e) => dropOnCell(x, y, e)}
-                  onDragEnd={endDrag}
-                  onClick={() => clickCell(x, y)}
-                >
-                  <span class="absolute top-0.5 right-1 text-[9px] font-mono text-base-content/30">
-                    {cellNumber(x, y)}
-                  </span>
-                  <Show when={occ()}>
-                    {(s) => (
-                      <span class="text-xs leading-tight break-all line-clamp-2 pointer-events-none">
-                        {unitName(s().unit)}
-                      </span>
-                    )}
-                  </Show>
-                </button>
-              );
-            }}
-          </Index>
+        <div class="aspect-square w-full max-w-md mx-auto bg-base-200/40 rounded-box overflow-hidden">
+          <CellGrid<GridSlot>
+            items={items()}
+            cols={GRID}
+            rows={GRID}
+            onCellClick={clickCell}
+            onItemMove={(item, nx, ny) => moveUnitTo(item.unit, nx, ny)}
+            selectedPos={selectedPos()}
+            renderItem={renderSlot}
+          />
         </div>
 
         <div class="flex items-center gap-2 flex-wrap">
@@ -378,7 +339,7 @@ function FormationEditor() {
             class="btn btn-xs btn-ghost"
             disabled={!selected() || !placed(selected()!)}
             onClick={removeSelected}
-            title="Remove the selected unit (or drag it onto the bench)"
+            title="Remove the selected placed unit from the grid"
           >
             Remove from grid
           </button>
@@ -394,22 +355,11 @@ function FormationEditor() {
           <div class="alert alert-soft alert-error text-xs py-2">✗ {error()}</div>
         </Show>
 
-        <div
-          class="rounded p-1.5 -m-1.5 border border-dashed border-transparent transition-colors"
-          classList={{
-            "border-accent bg-accent/5": benchHot(),
-            "border-base-300": !benchHot() && !!dragUnit() && dragFrom() === "grid",
-          }}
-          onDragOver={overBench}
-          onDragLeave={() => setBenchHot(false)}
-          onDrop={dropOnBench}
-        >
+        <div>
           <p class="text-xs text-base-content/45 mb-1">
             Bench{" "}
             <span class="text-base-content/35">
-              {dragUnit() && dragFrom() === "grid"
-                ? "// drop here to remove from the grid"
-                : "// drag onto a cell — or click a unit, then a cell"}
+              // click a unit, then a cell — drag placed units to move or swap
             </span>
           </p>
           <Show
@@ -420,15 +370,11 @@ function FormationEditor() {
               <For each={bench()}>
                 {(u) => (
                   <button
-                    class="btn btn-xs cursor-grab"
+                    class="btn btn-xs"
                     classList={{
                       "btn-primary": selected() === u.id,
                       "btn-soft": selected() !== u.id,
-                      "opacity-40": dragUnit() === u.id,
                     }}
-                    draggable={true}
-                    onDragStart={(e) => startDrag(u.id, "bench", e)}
-                    onDragEnd={endDrag}
                     onClick={() => setSelected(selected() === u.id ? null : u.id)}
                   >
                     {u.name}

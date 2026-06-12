@@ -7,9 +7,10 @@
 // `actionRewards`; plus the INVENTORY/roster/effects snapshots (holdings,
 // units + gear, formation-scoped Zone Effects) and their equip/use ops, and
 // the FORMATION layout (the `formation` snapshot + whole-layout
-// `setFormation` edits). Surfaces the backend doesn't serve (travel/area,
-// markets) stay unmodeled — those pages keep placeholders until the wire
-// grows them.
+// `setFormation` edits); plus TRAVEL (the travel action) and the zone MAP
+// (`listMap` → `mapView`, the discovered/frontier gridmap the Area page
+// renders). Surfaces the backend doesn't serve (markets, profile/rankings)
+// stay unmodeled — those pages keep placeholders until the wire grows them.
 //
 // In `uiDev`/offline mode there is no socket; chat sends echo locally so the UI
 // is exercisable without a server, and actions report that a server is needed.
@@ -39,6 +40,7 @@ import type {
   GearView,
   GeneralResourcesView,
   ItemStackView,
+  MapZoneInfo,
   RewardsView,
   ServerMessage,
   UnitView,
@@ -156,6 +158,11 @@ type WorldState = {
   /** Zone ("x,y,z") → its legal travel destinations (adjacent authored
    * zones), cached per server push like the enemy roster. */
   destinations: Record<string, DestinationInfo[]>;
+  /** The player's zone map (the `mapView` push): the discovered zones plus
+   * their one-step frontier (zones-and-travel.md "Map visibility"),
+   * authoritative and replaced wholesale. `current` is the zone the player
+   * stands in. Null until the first push (offline mode). */
+  map: { current: string; zones: MapZoneInfo[] } | null;
   /** Committed holdings; null until the first server push (offline mode). */
   inventory: InventoryState | null;
   /** Owned units (the `roster` push); null until the first server push. */
@@ -193,6 +200,8 @@ export type Game = {
   /** Request the current zone's travel destinations (answered by
    * `destinationList`). */
   listDestinations: () => void;
+  /** Request the player's zone map (answered by `mapView`). */
+  listMap: () => void;
   /** Start (or replace — atomic stop-then-start) an idle-combat action. */
   startCombat: (enemyId: string, kc: number) => void;
   /** Start (or replace — atomic stop-then-start) a travel action toward the
@@ -238,6 +247,7 @@ export function GameProvider(props: ParentProps) {
     action: null,
     enemies: {},
     destinations: {},
+    map: null,
     inventory: null,
     roster: null,
     formation: null,
@@ -336,6 +346,10 @@ export function GameProvider(props: ParentProps) {
         break;
       case "destinationList":
         setWorld("destinations", msg.from, msg.destinations);
+        break;
+      case "mapView":
+        // Authoritative snapshot: replace the whole map.
+        setWorld("map", { current: msg.current, zones: msg.zones });
         break;
       case "inventory":
         // Authoritative snapshot: replace, never merge or accumulate.
@@ -585,6 +599,11 @@ export function GameProvider(props: ParentProps) {
     send({ t: "game", gt: "listDestinations" });
   };
 
+  const listMap = () => {
+    if (!online()) return;
+    send({ t: "game", gt: "listMap" });
+  };
+
   const startCombat = (enemyId: string, kc: number) => {
     if (!online()) {
       pushLog("Offline — actions need a server connection.", "local");
@@ -748,6 +767,7 @@ export function GameProvider(props: ParentProps) {
     world,
     listEnemies,
     listDestinations,
+    listMap,
     startCombat,
     startTravel,
     stopAction,
