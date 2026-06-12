@@ -115,6 +115,17 @@ export type InventoryState = {
   gearTotal: number;
 };
 
+/** Total use-based XP accrued across a tally's `(unit, target)` gains. */
+export const totalXp = (r: RewardsView): number =>
+  (r.experience ?? []).reduce((sum, e) => sum + e.amount, 0);
+
+/** The level-ups a committed tally produced, as "STR 1→2" labels (progression.md).
+ * Only meaningful on the final `actionRewards` — per-tick gains carry level 0. */
+export const levelUps = (r: RewardsView): string[] =>
+  (r.experience ?? [])
+    .filter((e) => e.levelAfter > e.levelBefore)
+    .map((e) => `${e.target.toUpperCase()} ${e.levelBefore}→${e.levelAfter}`);
+
 /** A reward tally as one log-friendly line ("2 kills, 9 credits, 1 met, …"). */
 export const summarizeRewards = (r: RewardsView): string => {
   const parts = [`${r.kills} kills`, `${r.currencies.credits} credits`];
@@ -122,6 +133,8 @@ export const summarizeRewards = (r: RewardsView): string => {
   if (r.currencies.rousingDevices > 0) parts.push(`${r.currencies.rousingDevices} rousing devices`);
   for (const [id, q] of Object.entries(r.general)) if (q > 0) parts.push(`${q} ${id}`);
   for (const s of r.items) parts.push(`${s.qty}× ${s.name}`);
+  const xp = totalXp(r);
+  if (xp > 0) parts.push(`${xp} xp`);
   return parts.join(", ");
 };
 
@@ -426,20 +439,23 @@ export function GameProvider(props: ParentProps) {
           rewards: msg.rewards,
         });
         if (msg.kind === "travel") {
-          // Travel has no tally — its only outcome is arrival (or, when
-          // stopped, no movement at all).
-          pushLog(
-            msg.stopped
-              ? `Abandoned the journey to ${msg.targetName}.`
-              : `Arrived at ${msg.targetName}.`,
-            "reward",
-          );
+          // Travel's only loot is arrival (or, when stopped, no movement at
+          // all), but it banks use-based XP along the way (progression.md).
+          const xp = totalXp(msg.rewards);
+          const arrival = msg.stopped
+            ? `Abandoned the journey to ${msg.targetName}.`
+            : `Arrived at ${msg.targetName}.`;
+          pushLog(xp > 0 ? `${arrival} (+${xp} xp)` : arrival, "reward");
         } else {
           pushLog(
             `${msg.stopped ? "Stopped" : "Finished"} ${msg.kind} vs ${msg.targetName}: ` +
               `${summarizeRewards(msg.rewards)}.`,
             "reward",
           );
+        }
+        // Any kind can level a stat or skill; call those out (progression.md).
+        for (const up of levelUps(msg.rewards)) {
+          pushLog(`Level up — ${up}.`, "reward");
         }
         break;
       }

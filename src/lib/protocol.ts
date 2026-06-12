@@ -186,14 +186,29 @@ export type ItemStackView = {
   qty: number;
 };
 
+/** One accrued unit of experience (`XpGainView`, progression.md): the running
+ * total banked toward a `(unit, target)` pair, where `target` is a stat id
+ * (`"str"`..`"wis"`) or a skill id. `levelBefore`/`levelAfter` are `0` in the
+ * per-tick running tally and carry the unit's trained level on either side of
+ * the Resolution commit, so the client can call out level-ups. */
+export type XpGainView = {
+  unitId: string;
+  target: string;
+  amount: number;
+  levelBefore: number;
+  levelAfter: number;
+};
+
 /** An idle action's accrued (or final) reward tally (`RewardsView`). Gear
  * drops ride `items` as ordinary stacks (`kind === "gear"`); unique instances
- * are minted server-side when the tally commits. */
+ * are minted server-side when the tally commits. `experience` is the use-based
+ * XP accrued this action (omitted while empty). */
 export type RewardsView = {
   kills: number;
   currencies: CurrenciesView;
   general: GeneralResourcesView;
   items: ItemStackView[];
+  experience?: XpGainView[];
 };
 
 /** The six unit/gear stats (`UnitStatsView`, stats.md "Unit and gear stats"). */

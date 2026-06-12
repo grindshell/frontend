@@ -13,6 +13,7 @@ import type {
   ActionView,
   Direction,
   RewardsView,
+  XpGainView,
 } from "../../lib/protocol";
 
 // The idle-action screen: a tabbed per-action details column on the left and
@@ -436,7 +437,9 @@ function DestinationBrowser() {
 
 /** The in-flight travel action: journey progress, the destination, and the
  * cached formation stats (Speed drives the pace). Travel resolves no rounds and
- * accrues nothing, so there are no health pools or tally. */
+ * wins no loot — its outcome is the arrival — but it does accrue use-based XP
+ * each tick (progression.md), so there are no health pools but there is an XP
+ * tally. */
 function CurrentTravel(props: { act: ActionView }) {
   const game = useGame();
   const travel = () => props.act.travel;
@@ -489,6 +492,15 @@ function CurrentTravel(props: { act: ActionView }) {
           value={props.act.kcDone}
         />
       </div>
+
+      <Show when={(props.act.tally.experience ?? []).length > 0}>
+        <div class="flex flex-col gap-1">
+          <span class="text-xs text-base-content/55">Experience this journey</span>
+          <div class="flex flex-wrap gap-1">
+            <XpBadges experience={props.act.tally.experience} />
+          </div>
+        </div>
+      </Show>
 
       <StatsPanel
         title="Formation action stats"
@@ -556,6 +568,23 @@ function StatsPanel(props: { title: string; stats: ActionStatsView; modifier?: A
   );
 }
 
+/** Per-target use-based XP badges (progression.md): "+30 STR", with a "→2"
+ * suffix on the gains that crossed a trained-level boundary at commit. */
+function XpBadges(props: { experience?: XpGainView[] }) {
+  return (
+    <For each={props.experience ?? []}>
+      {(e) => (
+        <span class="badge badge-sm badge-soft">
+          🎓 +{e.amount} {e.target.toUpperCase()}
+          <Show when={e.levelAfter > e.levelBefore}>
+            <span class="text-success">&nbsp;→{e.levelAfter}</span>
+          </Show>
+        </span>
+      )}
+    </For>
+  );
+}
+
 function TallyBadges(props: { tally: RewardsView }) {
   const c = () => props.tally.currencies;
   return (
@@ -582,6 +611,7 @@ function TallyBadges(props: { tally: RewardsView }) {
           </span>
         )}
       </For>
+      <XpBadges experience={props.tally.experience} />
     </div>
   );
 }
@@ -631,14 +661,22 @@ function RewardView() {
           </>
         }
       >
-        {/* Travel has no tally — its outcome is the arrival (or, when stopped,
-            no movement at all). */}
+        {/* Travel's outcome is the arrival (or, when stopped, no movement at
+            all) — but the journey still banked use-based XP. */}
         <h2 class="text-lg font-mono">{r().stopped ? "Journey abandoned" : "Arrived"}</h2>
         <p class="text-base-content/60">
           {r().stopped
             ? `You never set out for ${r().targetName}.`
             : `You have reached ${r().targetName}.`}
         </p>
+        <Show when={(r().rewards.experience ?? []).length > 0}>
+          <div class="bg-base-200/40 rounded-box p-4">
+            <p class="text-xs text-base-content/45 mb-2">Experience gained</p>
+            <div class="flex justify-center flex-wrap gap-1">
+              <XpBadges experience={r().rewards.experience} />
+            </div>
+          </div>
+        </Show>
       </Show>
       <div class="flex justify-center gap-2">
         <button class="btn btn-sm btn-primary" disabled={!canRestart()} onClick={restart}>
