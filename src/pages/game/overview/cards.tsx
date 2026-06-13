@@ -355,8 +355,8 @@ const DIR_LABEL: Record<Direction, string> = {
   down: "Down",
 };
 
-/** A cell-grid item wrapping a map zone. Display y is the NEGATED world y so
- *  north (+y) renders upward, the conventional map orientation. */
+/** A cell-grid item wrapping a map zone, in true world coords. The CellGrid is
+ *  rendered with `flipY`, so north (+y) renders upward without negating here. */
 type MapItem = { x: number; y: number; zone: MapZoneInfo; };
 
 /** Viewport size of the card's mini-map, in cells. */
@@ -383,14 +383,14 @@ function MapCard(props: { span: Span; }) {
 
   const [viewZ, setViewZ] = createSignal(current().z);
   const [offsetX, setOffsetX] = createSignal(current().x - Math.floor(MAP_COLS / 2));
-  const [offsetY, setOffsetY] = createSignal(-current().y - Math.floor(MAP_ROWS / 2));
+  const [offsetY, setOffsetY] = createSignal(current().y - Math.floor(MAP_ROWS / 2));
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
 
   const recenter = () => {
     const c = current();
     setViewZ(c.z);
     setOffsetX(c.x - Math.floor(MAP_COLS / 2));
-    setOffsetY(-c.y - Math.floor(MAP_ROWS / 2));
+    setOffsetY(c.y - Math.floor(MAP_ROWS / 2));
   };
 
   // Pull the map + travel destinations when connected (both are on-demand, not
@@ -415,7 +415,7 @@ function MapCard(props: { span: Span; }) {
       .filter((z) => parseMapPos(z.pos).z === viewZ())
       .map((z) => {
         const p = parseMapPos(z.pos);
-        return { x: p.x, y: -p.y, zone: z };
+        return { x: p.x, y: p.y, zone: z };
       });
   });
 
@@ -429,7 +429,7 @@ function MapCard(props: { span: Span; }) {
     if (!z) return null;
     const p = parseMapPos(z.pos);
     if (p.z !== viewZ()) return null;
-    return { x: p.x, y: -p.y };
+    return { x: p.x, y: p.y };
   };
   const destinationAt = (key: string) => destinations().find((d) => d.position === key);
   const selDest = () => {
@@ -449,7 +449,7 @@ function MapCard(props: { span: Span; }) {
   };
 
   const onCellClick = (absX: number, absY: number) => {
-    const key = `${absX},${-absY},${viewZ()}`;
+    const key = `${absX},${absY},${viewZ()}`;
     const z = map()?.zones.find((zz) => zz.pos === key);
     // Clicking only selects (empty space clears it) — travel fires from the
     // Travel button, never the map click itself (matches the Area page).
@@ -506,6 +506,7 @@ function MapCard(props: { span: Span; }) {
                 selectedPos={selectedPos()}
                 renderItem={renderZone}
                 panMode
+                flipY
               />
             </div>
 

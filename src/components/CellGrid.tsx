@@ -51,6 +51,12 @@ export interface CellGridProps<T extends CellGridItem> {
    *  viewport — item drag is suppressed. Middle-button drag always pans
    *  regardless of this flag. Implies `onPan`. Default false. */
   panMode?: boolean;
+  /** When true, a larger Y renders *higher* on screen (cartesian / north-up)
+   *  instead of lower (traditional screen coords). Only the vertical axis is
+   *  affected; X is unchanged. Coordinates passed in and reported back stay in
+   *  true item space — the flip is purely how rows map to the screen. Default
+   *  false. */
+  flipY?: boolean;
 }
 
 const DRAG_CLICK_GUARD_MS = 250;
@@ -62,6 +68,14 @@ export default function CellGrid<T extends CellGridItem>(
   const offsetX = () => props.offsetX ?? 0;
   const offsetY = () => props.offsetY ?? 0;
   const minCellPx = () => props.minCellPx ?? 28;
+
+  // Map an absolute Y to its on-screen row index (0 = top row) and back. With
+  // `flipY`, a larger Y renders higher up (north-up); otherwise a larger Y
+  // renders lower down (traditional). X is never flipped.
+  const rowForY = (absY: number) =>
+    props.flipY ? props.rows - 1 - (absY - offsetY()) : absY - offsetY();
+  const yForRow = (row: number) =>
+    props.flipY ? offsetY() + props.rows - 1 - row : row + offsetY();
 
   let outerEl!: HTMLDivElement;
   let gsEl!: HTMLDivElement;
@@ -96,7 +110,7 @@ export default function CellGrid<T extends CellGridItem>(
     const pos = props.selectedPos;
     if (!pos) return;
     const vx = pos.x - offsetX();
-    const vy = pos.y - offsetY();
+    const vy = rowForY(pos.y);
     if (vx < 0 || vx >= props.cols || vy < 0 || vy >= props.rows) return;
     const cp = cellPx();
     highlightEl = document.createElement("div");
@@ -150,7 +164,7 @@ export default function CellGrid<T extends CellGridItem>(
 
       const widget = gs.makeWidget(outer, {
         x: item.x - offsetX(),
-        y: item.y - offsetY(),
+        y: rowForY(item.y),
         w: 1,
         h: 1,
         noResize: true,
@@ -186,6 +200,13 @@ export default function CellGrid<T extends CellGridItem>(
     gs = GridStack.init(
       {
         column: props.cols,
+        // Pin the grid host to exactly `rows` rows. Without minRow, gridstack's
+        // _updateContainerHeight sizes `.grid-stack` to getRow() (the lowest
+        // occupied row), so the host shrinks to its content and stops covering
+        // the empty viewport rows below it — those cells (and any tile dragged
+        // into them) become unclickable/undraggable. minRow === maxRow keeps the
+        // interactive host the same size as the visible backdrop grid.
+        minRow: props.rows,
         maxRow: props.rows,
         cellHeight: cellPx(),
         margin: 0,
@@ -214,7 +235,7 @@ export default function CellGrid<T extends CellGridItem>(
         return;
       }
       const absX = vx + offsetX();
-      const absY = vy + offsetY();
+      const absY = yForRow(vy);
       if (absX === originalItem.x && absY === originalItem.y) {
         buildItems();
         return;
@@ -277,10 +298,13 @@ export default function CellGrid<T extends CellGridItem>(
     }
     panState.lastDeltaX = deltaX;
     panState.lastDeltaY = deltaY;
-    // Inverted: dragging right reveals what was to the left.
+    // Inverted: dragging right reveals what was to the left. The vertical sense
+    // depends on flipY — with north-up, dragging down reveals higher Y.
     props.onPan?.(
       panState.baseOffsetX - deltaX,
-      panState.baseOffsetY - deltaY,
+      props.flipY
+        ? panState.baseOffsetY + deltaY
+        : panState.baseOffsetY - deltaY,
     );
   }
 
@@ -330,7 +354,7 @@ export default function CellGrid<T extends CellGridItem>(
       const vx = Math.floor((e.clientX - rect.left) / cp);
       const vy = Math.floor((e.clientY - rect.top) / cp);
       if (vx < 0 || vx >= props.cols || vy < 0 || vy >= props.rows) return;
-      props.onCellClick(vx + offsetX(), vy + offsetY());
+      props.onCellClick(vx + offsetX(), yForRow(vy));
     });
 
     setCursor(props.onPan ? "grab" : "pointer");

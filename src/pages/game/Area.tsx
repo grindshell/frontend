@@ -40,8 +40,8 @@ const DIR_LABEL: Record<Direction, string> = {
   down: "Down",
 };
 
-/** A cell-grid item wrapping a map zone. Display y is the NEGATED world y so
- *  north (+y) renders upward, the conventional map orientation. */
+/** A cell-grid item wrapping a map zone, in true world coords. The CellGrid is
+ *  rendered with `flipY`, so north (+y) renders upward without negating here. */
 type MapItem = { x: number; y: number; zone: MapZoneInfo };
 
 /** A small danger badge class by level (1 safe → 5 lethal). */
@@ -69,14 +69,14 @@ export function Area() {
 
   const [viewZ, setViewZ] = createSignal(current().z);
   const [offsetX, setOffsetX] = createSignal(current().x - Math.floor(COLS / 2));
-  const [offsetY, setOffsetY] = createSignal(-current().y - Math.floor(ROWS / 2));
+  const [offsetY, setOffsetY] = createSignal(current().y - Math.floor(ROWS / 2));
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
 
   const recenter = () => {
     const c = current();
     setViewZ(c.z);
     setOffsetX(c.x - Math.floor(COLS / 2));
-    setOffsetY(-c.y - Math.floor(ROWS / 2));
+    setOffsetY(c.y - Math.floor(ROWS / 2));
   };
 
   // Re-center the viewport (and follow Z) whenever the player moves to a new
@@ -95,7 +95,7 @@ export function Area() {
       .filter((z) => parsePos(z.pos).z === viewZ())
       .map((z) => {
         const p = parsePos(z.pos);
-        return { x: p.x, y: -p.y, zone: z };
+        return { x: p.x, y: p.y, zone: z };
       });
   });
 
@@ -112,7 +112,7 @@ export function Area() {
     if (!z) return null;
     const p = parsePos(z.pos);
     if (p.z !== viewZ()) return null;
-    return { x: p.x, y: -p.y };
+    return { x: p.x, y: p.y };
   };
 
   /** The legal travel destination at `key`, if that zone is an adjacent
@@ -152,7 +152,7 @@ export function Area() {
   };
 
   const onCellClick = (absX: number, absY: number) => {
-    const key = `${absX},${-absY},${viewZ()}`;
+    const key = `${absX},${absY},${viewZ()}`;
     const z = map()?.zones.find((zz) => zz.pos === key);
     // Clicking only SELECTS a zone — its details (and a Travel button, when the
     // zone is an adjacent destination) surface in the side panel. Clicking empty
@@ -229,6 +229,7 @@ export function Area() {
               selectedPos={selectedPos()}
               renderItem={renderZone}
               panMode
+              flipY
             />
           </div>
 
