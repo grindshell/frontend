@@ -1,4 +1,5 @@
 import { For } from "solid-js";
+import { A } from "@solidjs/router";
 
 type Item = { title: string; desc: string; url: string; };
 
@@ -53,6 +54,15 @@ export function About() {
           )}
         </For>
       </ul>
+      <footer class="mt-6 pt-3 border-t border-base-300/60 text-sm flex items-center gap-2">
+        <A href="/tos" class="text-primary hover:underline">
+          Terms of Service
+        </A>
+        <span class="text-base-content/40">·</span>
+        <A href="/privacy" class="text-primary hover:underline">
+          Privacy Policy
+        </A>
+      </footer>
     </section>
   );
 }

@@ -191,6 +191,10 @@ export type ClientData =
   | { t: "adminCmd"; tt: "setModerator"; username: string; moderator: boolean }
   // List the current player moderators → a `moderators` push.
   | { t: "adminCmd"; tt: "listModerators" }
+  // Hot-reload the authored content catalogs at runtime (content-format.md
+  // "Hot reload"). Acked once queued; each reload leaks the superseded catalog
+  // generation by design, so the admin UI warns before issuing it.
+  | { t: "adminCmd"; tt: "reloadContent" }
   | { t: "requestState" };
 
 /** The full client → server envelope (`Message`). `nonce` correlates Ack/Nack. */

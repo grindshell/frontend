@@ -17,6 +17,9 @@ export function Admin() {
   const [result, setResult] = createSignal<{ ok: boolean; text: string }>();
   const [promotee, setPromotee] = createSignal("");
   const [modResult, setModResult] = createSignal<{ ok: boolean; text: string }>();
+  const [confirmReload, setConfirmReload] = createSignal(false);
+  const [reloadBusy, setReloadBusy] = createSignal(false);
+  const [reloadResult, setReloadResult] = createSignal<{ ok: boolean; text: string }>();
 
   // Load the moderator listing once connected as an admin (chat.md
   // "Moderator designation").
@@ -46,6 +49,24 @@ export function Admin() {
       // Best-effort prefill; leave the field empty on failure.
     }
   });
+
+  // Runtime content reload (content-format.md "Hot reload"). Two-step: the
+  // first click reveals the memory-leak warning, the confirm issues it.
+  const doReload = () => {
+    setReloadBusy(true);
+    game.reloadContent({
+      onSuccess: (msg) => {
+        setReloadBusy(false);
+        setConfirmReload(false);
+        setReloadResult({ ok: true, text: msg ?? "Content reload requested." });
+      },
+      onError: (reason) => {
+        setReloadBusy(false);
+        setConfirmReload(false);
+        setReloadResult({ ok: false, text: reason ?? "Failed to request reload." });
+      },
+    });
+  };
 
   const save = () => {
     setBusy(true);
@@ -186,6 +207,71 @@ export function Admin() {
                   {r().text}
                 </span>
               )}
+            </Show>
+          </fieldset>
+        </div>
+
+        {/* Runtime content reload (content-format.md "Hot reload"). Re-reads the
+            authored catalogs without a restart; each reload leaks the superseded
+            generation, so the confirm step spells that out. */}
+        <div class="p-3 border border-base-300 rounded-xl bg-base-200 max-w-2xl">
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Content</legend>
+            <p class="label text-base-content/45">
+              Re-read the authored content catalogs (enemies, zones, items, drop tables) from
+              disk without restarting the server. Runs as root and is logged; applied at the next
+              tick boundary.
+            </p>
+            <Show
+              when={confirmReload()}
+              fallback={
+                <div class="flex items-center gap-3 mt-2">
+                  <button
+                    class="btn btn-sm btn-warning"
+                    disabled={reloadBusy() || !game.online()}
+                    onClick={() => {
+                      setReloadResult(undefined);
+                      setConfirmReload(true);
+                    }}
+                  >
+                    Reload content…
+                  </button>
+                  <Show when={!game.online()}>
+                    <span class="text-xs text-base-content/45">
+                      Offline — connect to a server.
+                    </span>
+                  </Show>
+                  <Show when={reloadResult()}>
+                    {(r) => (
+                      <span class={"text-sm " + (r().ok ? "text-success" : "text-error")}>
+                        {r().text}
+                      </span>
+                    )}
+                  </Show>
+                </div>
+              }
+            >
+              <div role="alert" class="alert alert-warning mt-2 text-sm">
+                <span>
+                  Heads up: each reload <strong>leaks memory</strong>. The superseded content
+                  generation is never freed (a few KB per reload) — fine occasionally, but don't
+                  hammer it. Reload now?
+                </span>
+              </div>
+              <div class="flex items-center gap-2 mt-2">
+                <button class="btn btn-sm btn-warning" disabled={reloadBusy()} onClick={doReload}>
+                  <Show when={reloadBusy()} fallback="Confirm reload">
+                    <span class="loading loading-spinner loading-xs" />
+                  </Show>
+                </button>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  disabled={reloadBusy()}
+                  onClick={() => setConfirmReload(false)}
+                >
+                  Cancel
+                </button>
+              </div>
             </Show>
           </fieldset>
         </div>

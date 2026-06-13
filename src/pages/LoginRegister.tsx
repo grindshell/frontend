@@ -2,6 +2,8 @@ import { Match, Show, Switch, createMemo, createResource, createSignal, type JSX
 import { CFTurnstile, type TurnstileHandle } from "../components/CFTurnstile";
 import { TextInput } from "../components/TextInput";
 import { GdprConsent } from "../components/GdprConsent";
+import { TosModal } from "./Tos";
+import { PrivacyModal } from "./Privacy";
 import * as api from "../lib/api";
 import { enterOffline, setToken } from "../lib/auth";
 import { config } from "../lib/config";
@@ -12,6 +14,7 @@ const captchaRequired = () => !!config.cfSitekey;
 
 export function LoginRegister() {
   const [page, setPage] = createSignal<Page>("login");
+  const [modal, setModal] = createSignal<"tos" | "privacy" | null>(null);
   const year = new Date().getFullYear();
 
   return (
@@ -26,7 +29,11 @@ export function LoginRegister() {
                   <Login setPage={setPage} />
                 </Match>
                 <Match when={page() === "register"}>
-                  <Register setPage={setPage} />
+                  <Register
+                    setPage={setPage}
+                    onShowTos={() => setModal("tos")}
+                    onShowPrivacy={() => setModal("privacy")}
+                  />
                 </Match>
                 <Match when={page() === "forgot"}>
                   <Forgot setPage={setPage} />
@@ -44,9 +51,23 @@ export function LoginRegister() {
         </div>
       </div>
       <GdprConsent />
-      <footer class="footer footer-center text-xs text-base-content/40 pt-4">
-        Copyright Grindshell {year}
+      <footer class="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-base-content/40 pt-4">
+        <span>Copyright Grindshell {year}</span>
+        <span aria-hidden="true">·</span>
+        <button type="button" class="text-primary hover:underline cursor-pointer" onClick={() => setModal("tos")}>
+          Terms of Service
+        </button>
+        <span aria-hidden="true">·</span>
+        <button type="button" class="text-primary hover:underline cursor-pointer" onClick={() => setModal("privacy")}>
+          Privacy Policy
+        </button>
       </footer>
+      <Show when={modal() === "tos"}>
+        <TosModal onClose={() => setModal(null)} />
+      </Show>
+      <Show when={modal() === "privacy"}>
+        <PrivacyModal onClose={() => setModal(null)} />
+      </Show>
     </div>
   );
 }
@@ -230,10 +251,11 @@ function Login(props: { setPage: (p: Page) => void }) {
 
 /* ---------------- register ---------------- */
 
-function Register(props: { setPage: (p: Page) => void }) {
+function Register(props: { setPage: (p: Page) => void; onShowTos: () => void; onShowPrivacy: () => void }) {
   const [email, setEmail] = createSignal("");
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
+  const [agreed, setAgreed] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
 
@@ -243,13 +265,15 @@ function Register(props: { setPage: (p: Page) => void }) {
   const usernameError = createMemo(() => validateUsername(username()));
   const passwordError = createMemo(() => validatePassword(password()));
 
+  // Agreement to the Terms is required before creating any account, guest included.
   const canSubmit = () =>
-    isGuest() ||
-    (emailError() === undefined &&
-      usernameError() === undefined &&
-      passwordError() === undefined &&
-      username().length > 0 &&
-      password().length >= 10);
+    agreed() &&
+    (isGuest() ||
+      (emailError() === undefined &&
+        usernameError() === undefined &&
+        passwordError() === undefined &&
+        username().length > 0 &&
+        password().length >= 10));
 
   const submit = async (cfToken: string) => {
     setBusy(true);
@@ -284,6 +308,39 @@ function Register(props: { setPage: (p: Page) => void }) {
       <TextInput legend="Email" placeholder="your@email.address" value={email()} errText={emailError()} onInput={setEmail} optional />
       <TextInput legend="Username" placeholder="Username" value={username()} errText={usernameError()} onInput={setUsername} optional={isGuest()} />
       <TextInput type="password" legend="Password" placeholder="Password" value={password()} errText={passwordError()} onInput={setPassword} optional={isGuest()} />
+      <label class="flex items-start gap-2 mt-3 cursor-pointer">
+        <input
+          type="checkbox"
+          class="checkbox checkbox-sm shrink-0 mt-0.5"
+          checked={agreed()}
+          onChange={(e) => setAgreed(e.currentTarget.checked)}
+        />
+        <span class="text-sm leading-snug">
+          I am 18+ and agree to the{" "}
+          <span
+            class="text-primary hover:underline cursor-pointer"
+            role="button"
+            onClick={(e) => {
+              e.preventDefault();
+              props.onShowTos();
+            }}
+          >
+            Terms of Service
+          </span>{" "}
+          and{" "}
+          <span
+            class="text-primary hover:underline cursor-pointer"
+            role="button"
+            onClick={(e) => {
+              e.preventDefault();
+              props.onShowPrivacy();
+            }}
+          >
+            Privacy Policy
+          </span>
+          .
+        </span>
+      </label>
     </FormShell>
   );
 }

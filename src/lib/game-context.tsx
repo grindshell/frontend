@@ -324,6 +324,15 @@ export type Game = {
     body: string,
     handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
   ) => void;
+  /** Hot-reload the server's authored content catalogs (an admin command,
+   * content-format.md "Hot reload"). Sudoers-gated server-side like
+   * `setMotd` — only surface when `world.isAdmin`. Each reload leaks the
+   * superseded catalog generation, so the caller should confirm first.
+   * `onSuccess` fires on the ack, `onError` on a nack. */
+  reloadContent: (handlers?: {
+    onSuccess?: (msg?: string) => void;
+    onError?: (reason?: string) => void;
+  }) => void;
   /** Request the global-market goods catalog (answered by `marketGoods`). */
   listMarketGoods: () => void;
   /** Request one good's order book (answered by `marketBook`). */
@@ -918,6 +927,19 @@ export function GameProvider(props: ParentProps) {
     );
   };
 
+  // Sudoers-gated server-side like setMotd; only surfaced to world.isAdmin.
+  // The server acks once the reload is queued (it runs at the next tick
+  // boundary, fire-and-forget).
+  const reloadContent = (handlers?: {
+    onSuccess?: (msg?: string) => void;
+    onError?: (reason?: string) => void;
+  }) =>
+    sendOp(
+      { t: "adminCmd", tt: "reloadContent" },
+      "offline — admin commands need a server connection",
+      handlers,
+    );
+
   /** Ask the server for a full state refresh (top-level control message,
    * rate-limited per connection). The server fans it to both subsystems: chat
    * re-pushes `chatState`, the game re-pushes `gameState` + `inventory` +
@@ -1228,6 +1250,7 @@ export function GameProvider(props: ParentProps) {
     useConsumable,
     setFormation,
     setMotd,
+    reloadContent,
     listMarketGoods,
     viewMarket,
     listMyOrders,

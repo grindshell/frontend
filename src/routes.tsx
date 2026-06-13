@@ -7,6 +7,8 @@ import { Inventory } from "./pages/game/Inventory";
 import { Market } from "./pages/game/Market";
 import { Settings } from "./pages/game/Settings";
 import { About } from "./pages/game/About";
+import { Tos } from "./pages/Tos";
+import { Privacy } from "./pages/Privacy";
 import { Admin } from "./pages/game/Admin";
 import { Moderator } from "./pages/game/Moderator";
 import { Profile } from "./pages/game/Profile";
@@ -33,6 +35,8 @@ export const Routes: RouteDefinition[] = [
   { path: "/time-tracker", component: TimeTracker },
   { path: "/resource-editor", component: ResourceEditor },
   { path: "/about", component: About },
+  { path: "/tos", component: Tos },
+  { path: "/privacy", component: Privacy },
   { path: "/settings", component: Settings },
   { path: "/moderator", component: Moderator },
   { path: "/admin", component: Admin },
