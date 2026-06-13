@@ -67,7 +67,16 @@ export function Actions() {
                   classList={{ "tab-active": tab() === t }}
                   disabled={!LIVE_TABS.includes(t)}
                   title={LIVE_TABS.includes(t) ? undefined : "coming soon"}
-                  onClick={() => setTab(t)}
+                  onClick={() => {
+                    // Switching tabs while the reward view is up means the
+                    // player wants to start a *different* action — drop the
+                    // completed action's RewardView so the new tab opens on its
+                    // picker instead of re-showing the old rewards.
+                    if (t !== tab() && game.world.lastRewards != null) {
+                      game.clearRewards();
+                    }
+                    setTab(t);
+                  }}
                 >
                   {t}
                   <Show when={game.world.action?.kind === KIND_BY_TAB[t]}>
