@@ -52,6 +52,8 @@ export function ChatPanel(props: { onCollapse?: () => void }) {
 
   const isDms = () => game.chat.activeRoom === game.dmBucket;
   const entries = () => game.chat.byRoom[game.chat.activeRoom] ?? [];
+  /** Render newest-first so new messages land at the top, by the input box. */
+  const orderedEntries = () => entries().slice().reverse();
   const isStaff = () => game.world.isAdmin || game.world.isModerator;
   /** The room context commands/notices ride: null in the DM view. */
   const roomCtx = () => (isDms() ? null : game.chat.activeRoom);
@@ -212,7 +214,7 @@ export function ChatPanel(props: { onCollapse?: () => void }) {
               when={entries().length > 0}
               fallback={<li class="text-base-content/35">No messages yet.</li>}
             >
-              <For each={entries()}>
+              <For each={orderedEntries()}>
                 {(m) => (
                   <li class="text-base-content/85">
                     <span class="text-base-content/35">[{hhmm(m.at)}]</span>{" "}

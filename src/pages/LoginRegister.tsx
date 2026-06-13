@@ -90,7 +90,7 @@ function Descriptor() {
 
           <Show when={status()}>
             {(s) => (
-              <div class="mt-10 text-left">
+              <div class="mt-10">
                 <Show when={s().motd}>
                   <div class="text-[11px] uppercase tracking-wide text-base-content/40">
                     Message of the day
@@ -189,7 +189,7 @@ function FormShell(props: {
   );
 }
 
-function SwitchLink(props: { text: string; onClick: () => void }) {
+function SwitchLink(props: { text: string; onClick: () => void; }) {
   return (
     <>
       <div class="divider my-4" />
@@ -204,7 +204,7 @@ function SwitchLink(props: { text: string; onClick: () => void }) {
 
 /* ---------------- login ---------------- */
 
-function Login(props: { setPage: (p: Page) => void }) {
+function Login(props: { setPage: (p: Page) => void; }) {
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -251,7 +251,7 @@ function Login(props: { setPage: (p: Page) => void }) {
 
 /* ---------------- register ---------------- */
 
-function Register(props: { setPage: (p: Page) => void; onShowTos: () => void; onShowPrivacy: () => void }) {
+function Register(props: { setPage: (p: Page) => void; onShowTos: () => void; onShowPrivacy: () => void; }) {
   const [email, setEmail] = createSignal("");
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
@@ -282,10 +282,10 @@ function Register(props: { setPage: (p: Page) => void; onShowTos: () => void; on
       const token = isGuest()
         ? await api.register(cfToken)
         : await api.register(cfToken, {
-            username: username(),
-            password: password(),
-            email: email() || undefined,
-          });
+          username: username(),
+          password: password(),
+          email: email() || undefined,
+        });
       setToken(token);
     } catch (e) {
       setError((e as api.AuthError).message ?? "Registration failed.");
@@ -347,7 +347,7 @@ function Register(props: { setPage: (p: Page) => void; onShowTos: () => void; on
 
 /* ---------------- forgot password ---------------- */
 
-function Forgot(props: { setPage: (p: Page) => void }) {
+function Forgot(props: { setPage: (p: Page) => void; }) {
   // Password recovery is canon (accounts.md) but the backend has no endpoint
   // yet, so this is an informational stub rather than a dead form.
   return (
