@@ -1,5 +1,5 @@
 import { Match, Show, Switch, createMemo, createResource, createSignal, type JSX } from "solid-js";
-import { CFTurnstile } from "../components/CFTurnstile";
+import { CFTurnstile, type TurnstileHandle } from "../components/CFTurnstile";
 import { TextInput } from "../components/TextInput";
 import { GdprConsent } from "../components/GdprConsent";
 import * as api from "../lib/api";
@@ -99,27 +99,56 @@ function Descriptor() {
 function FormShell(props: {
   title: string;
   children: JSX.Element;
-  onSubmit: () => void;
+  /** Receives the CAPTCHA token obtained at submit time (empty when disabled). */
+  onSubmit: (cfToken: string) => void | Promise<void>;
   submitText: string;
   canSubmit: boolean;
   busy: boolean;
   error?: string;
-  onCaptcha: (token: string) => void;
-  onCaptchaExpired?: () => void;
+  onError: (msg: string) => void;
   footer?: JSX.Element;
 }) {
+  let turnstile: TurnstileHandle | undefined;
+  // True while we're running the CAPTCHA challenge — including the wait for a
+  // user to solve an interactive one — before the request itself fires.
+  const [verifying, setVerifying] = createSignal(false);
+
+  const submit = async () => {
+    if (!props.canSubmit || props.busy || verifying()) return;
+    // Only run the CAPTCHA when the user actually submits. If it clears
+    // silently we get the token immediately; if it needs the user, getToken()
+    // resolves once they solve the challenge that pops into view.
+    let cfToken = "";
+    if (captchaRequired()) {
+      if (!turnstile) {
+        props.onError("The CAPTCHA isn't ready yet. Please try again.");
+        return;
+      }
+      setVerifying(true);
+      try {
+        cfToken = await turnstile.getToken();
+      } catch (e) {
+        props.onError((e as Error)?.message ?? "CAPTCHA verification failed.");
+        return;
+      } finally {
+        setVerifying(false);
+      }
+    }
+    await props.onSubmit(cfToken);
+  };
+
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (props.canSubmit && !props.busy) props.onSubmit();
+        void submit();
       }}
     >
       <h2 class="text-2xl font-semibold text-center mb-4">{props.title}</h2>
       {props.children}
 
       <Show when={captchaRequired()} fallback={<p class="text-[11px] text-base-content/35 text-center mt-2">CAPTCHA disabled (no sitekey configured).</p>}>
-        <CFTurnstile onSuccess={props.onCaptcha} onExpired={props.onCaptchaExpired} />
+        <CFTurnstile onReady={(h) => (turnstile = h)} onError={(code) => props.onError(`CAPTCHA error (${code}).`)} />
       </Show>
 
       <Show when={props.error}>
@@ -128,8 +157,8 @@ function FormShell(props: {
         </div>
       </Show>
 
-      <button type="submit" class="btn btn-primary w-full mt-3" disabled={!props.canSubmit || props.busy}>
-        <Show when={props.busy} fallback={props.submitText}>
+      <button type="submit" class="btn btn-primary w-full mt-3" disabled={!props.canSubmit || props.busy || verifying()}>
+        <Show when={props.busy || verifying()} fallback={props.submitText}>
           <span class="loading loading-spinner loading-sm" />
         </Show>
       </button>
@@ -157,20 +186,18 @@ function SwitchLink(props: { text: string; onClick: () => void }) {
 function Login(props: { setPage: (p: Page) => void }) {
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
-  const [cfToken, setCfToken] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
 
   const usernameError = createMemo(() => validateUsername(username()));
-  const captchaOk = () => !captchaRequired() || cfToken().length > 0;
   const canSubmit = () =>
-    usernameError() === undefined && username().length > 0 && password().length >= 10 && captchaOk();
+    usernameError() === undefined && username().length > 0 && password().length >= 10;
 
-  const submit = async () => {
+  const submit = async (cfToken: string) => {
     setBusy(true);
     setError(undefined);
     try {
-      const token = await api.login(cfToken(), username(), password());
+      const token = await api.login(cfToken, username(), password());
       setToken(token);
     } catch (e) {
       setError((e as api.AuthError).message ?? "Login failed.");
@@ -187,8 +214,7 @@ function Login(props: { setPage: (p: Page) => void }) {
       canSubmit={canSubmit()}
       busy={busy()}
       error={error()}
-      onCaptcha={setCfToken}
-      onCaptchaExpired={() => setCfToken("")}
+      onError={setError}
       footer={
         <SwitchLink text="No account? Register or create a guest account!" onClick={() => props.setPage("register")} />
       }
@@ -208,7 +234,6 @@ function Register(props: { setPage: (p: Page) => void }) {
   const [email, setEmail] = createSignal("");
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
-  const [cfToken, setCfToken] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
 
@@ -217,24 +242,22 @@ function Register(props: { setPage: (p: Page) => void }) {
   const emailError = createMemo(() => validateEmail(email()));
   const usernameError = createMemo(() => validateUsername(username()));
   const passwordError = createMemo(() => validatePassword(password()));
-  const captchaOk = () => !captchaRequired() || cfToken().length > 0;
 
   const canSubmit = () =>
-    captchaOk() &&
-    (isGuest() ||
-      (emailError() === undefined &&
-        usernameError() === undefined &&
-        passwordError() === undefined &&
-        username().length > 0 &&
-        password().length >= 10));
+    isGuest() ||
+    (emailError() === undefined &&
+      usernameError() === undefined &&
+      passwordError() === undefined &&
+      username().length > 0 &&
+      password().length >= 10);
 
-  const submit = async () => {
+  const submit = async (cfToken: string) => {
     setBusy(true);
     setError(undefined);
     try {
       const token = isGuest()
-        ? await api.register(cfToken())
-        : await api.register(cfToken(), {
+        ? await api.register(cfToken)
+        : await api.register(cfToken, {
             username: username(),
             password: password(),
             email: email() || undefined,
@@ -255,8 +278,7 @@ function Register(props: { setPage: (p: Page) => void }) {
       canSubmit={canSubmit()}
       busy={busy()}
       error={error()}
-      onCaptcha={setCfToken}
-      onCaptchaExpired={() => setCfToken("")}
+      onError={setError}
       footer={<SwitchLink text="Already have an account? Login!" onClick={() => props.setPage("login")} />}
     >
       <TextInput legend="Email" placeholder="your@email.address" value={email()} errText={emailError()} onInput={setEmail} optional />

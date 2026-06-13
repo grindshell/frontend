@@ -129,29 +129,33 @@ export function Sidebar(props: { open: boolean; setOpen: (v: boolean) => void })
         </li>
       </ul>
       <div class="divider my-0 mx-2" />
-      <ul class="menu w-full p-1.5 space-y-0.5">
-        <For each={ROUTES}>{(r) => <Item r={r} />}</For>
-      </ul>
-      <div class="divider my-0 mx-2" />
-      <ul class="menu w-full p-1.5 space-y-0.5">
-        <For each={UTIL_ROUTES}>{(r) => <Item r={r} />}</For>
-      </ul>
-      <Show when={game.world.isAdmin || game.world.isModerator}>
-        <div class="divider my-0 mx-2 text-[10px] uppercase tracking-wider text-base-content/35">
-          {props.open ? "Admin" : ""}
-        </div>
+      {/* Scrollable nav region: grows to fill the rail, but collapses and
+          scrolls when the viewport is too short so the bottom routes below
+          stay pinned and reachable. */}
+      <div class="flex-1 min-h-0 overflow-y-auto">
         <ul class="menu w-full p-1.5 space-y-0.5">
-          <Item r={MODERATOR_ROUTE} />
-          <Show when={game.world.isAdmin}>
-            <Item r={ADMIN_ROUTE} />
-          </Show>
+          <For each={ROUTES}>{(r) => <Item r={r} />}</For>
         </ul>
-      </Show>
-      <Show when={props.open}>
         <div class="divider my-0 mx-2" />
-        <ResourcesQuickView />
-      </Show>
-      <div class="flex-1" />
+        <ul class="menu w-full p-1.5 space-y-0.5">
+          <For each={UTIL_ROUTES}>{(r) => <Item r={r} />}</For>
+        </ul>
+        <Show when={game.world.isAdmin || game.world.isModerator}>
+          <div class="divider my-0 mx-2 text-[10px] uppercase tracking-wider text-base-content/35">
+            {props.open ? "Admin" : ""}
+          </div>
+          <ul class="menu w-full p-1.5 space-y-0.5">
+            <Item r={MODERATOR_ROUTE} />
+            <Show when={game.world.isAdmin}>
+              <Item r={ADMIN_ROUTE} />
+            </Show>
+          </ul>
+        </Show>
+        <Show when={props.open}>
+          <div class="divider my-0 mx-2" />
+          <ResourcesQuickView />
+        </Show>
+      </div>
       <div class="divider my-0 mx-2" />
       <ul class="menu w-full p-1.5 space-y-0.5 pb-3">
         <For each={BOTTOM_ROUTES}>{(r) => <Item r={r} />}</For>

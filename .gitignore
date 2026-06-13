@@ -5,3 +5,4 @@ dist
 
 references
 .env.development
+.env.production
