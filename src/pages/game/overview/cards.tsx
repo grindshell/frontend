@@ -12,7 +12,7 @@ import {
 import { useNavigate } from "@solidjs/router";
 import { actionTarget, summarizeRewards, useGame } from "../../../lib/game-context";
 import type { Direction, MapZoneInfo } from "../../../lib/protocol";
-import CellGrid from "../../../components/CellGrid";
+import { CellGrid } from "@grindshell/ui-components";
 
 // Overview cards — condensed views of the underlying game pages. Each body
 // receives a { col, row } span and adapts its density to the card's area.

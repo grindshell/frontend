@@ -262,7 +262,8 @@ serves **today**:
   `mapView` push — the player's `current` zone plus every visible zone (the discovered region and
   its one-step frontier), each flagged `discovered`. The client replaces `world.map` wholesale; the
   [Area page](src/pages/game/Area.tsx) renders it on the shared `CellGrid` (Gridstack — the same
-  component the editor's tile map uses, [components/CellGrid.tsx](src/components/CellGrid.tsx)) one
+  component the editor's tile map uses, now the **`@grindshell/ui-components`** package consumed via
+  pnpm `link:`, [../ui-components/CLAUDE.md](../ui-components/CLAUDE.md); edit it there, not here) one
   X/Y plane at a time with a Z toggle. Clicking a zone **only selects** it — the selected zone's
   details surface in the side panel (name, position, discovered/frontier/current status, danger),
   with a Travel button when it's an adjacent destination; clicking empty space clears the

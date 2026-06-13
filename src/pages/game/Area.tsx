@@ -9,7 +9,7 @@ import {
 import { useGame } from "../../lib/game-context";
 import type { Direction, MapZoneInfo } from "../../lib/protocol";
 import { Icon } from "../../components/Icon";
-import CellGrid from "../../components/CellGrid";
+import { CellGrid } from "@grindshell/ui-components";
 
 // The zone map (zones-and-travel.md "Map visibility"): the discovered region of
 // the 3D gridmap plus its one-step frontier, streamed from the backend

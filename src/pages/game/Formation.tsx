@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createEffect, createSignal } from "solid-js";
 import { useSearchParams } from "@solidjs/router";
 import { useGame } from "../../lib/game-context";
 import type { FormationSlotView } from "../../lib/protocol";
-import CellGrid, { type CellGridItem } from "../../components/CellGrid";
+import { CellGrid, type CellGridItem } from "@grindshell/ui-components";
 import { GRID, SOFT_CAP, cellNumber, sizeMultiplier } from "../../lib/formation";
 import { UnitDetail } from "./UnitDetail";
 

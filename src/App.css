@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Scan the shared @grindshell/ui-components source so Tailwind generates the
+ * utility/DaisyUI classes those components hardcode (e.g. CellGrid). Tailwind v4
+ * ignores node_modules, so point at the sibling source directly. */
+@source "../../ui-components/src/**/*.{ts,tsx}";
+
 @plugin "daisyui" {
   themes: dark --default, light, cupcake, bumblebee, emerald, corporate, synthwave,
     retro, cyberpunk, valentine, halloween, garden, forest, aqua, lofi, pastel, fantasy,

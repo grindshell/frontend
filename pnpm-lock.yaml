@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@grindshell/ui-components':
+        specifier: link:../ui-components
+        version: link:../ui-components
       '@solidjs/router':
         specifier: ^0.15.4
         version: 0.15.4(solid-js@1.9.13)

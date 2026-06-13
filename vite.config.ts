@@ -9,6 +9,13 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [tailwindcss(), solid()],
 
+  // @grindshell/ui-components is consumed as Solid SOURCE via `link:`. Keep its
+  // solid-js/gridstack resolving to this app's single copy (dedupe), let
+  // vite-plugin-solid compile it instead of esbuild pre-bundling it (exclude),
+  // and allow vite to serve the linked source that lives outside this root.
+  resolve: { dedupe: ["solid-js", "solid-js/web", "gridstack"] },
+  optimizeDeps: { exclude: ["@grindshell/ui-components"] },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
@@ -29,5 +36,7 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    // 4. allow serving the linked @grindshell/ui-components source (sibling dir)
+    fs: { allow: [".."] },
   },
 }));

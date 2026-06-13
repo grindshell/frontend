@@ -13,6 +13,7 @@
   },
   "license": "AGPL-3.0",
   "dependencies": {
+    "@grindshell/ui-components": "link:../ui-components",
     "solid-js": "^1.9.3",
     "@solidjs/router": "^0.15.4",
     "@tauri-apps/api": "^2",
