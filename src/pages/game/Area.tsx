@@ -208,13 +208,15 @@ export function Area() {
           </div>
         }
       >
-        <div class="grow flex gap-4 overflow-hidden">
+        {/* On mobile the column reverses so the details panel sits above the
+            map (DOM order is map → aside; flex-col-reverse flips it). */}
+        <div class="grow flex flex-col-reverse md:flex-row gap-4 overflow-y-auto md:overflow-hidden">
           {/* The grid plane. `panMode`: zones aren't rearrangeable, so a
               left-drag anywhere — including on a zone tile — pans the viewport
               (a plain `disableDrag` would let pan start only on empty cells,
               and dragging a zone would do nothing). A click without a drag
               still selects, gated by CellGrid's pan threshold. */}
-          <div class="grow rounded-box bg-base-200/40 overflow-hidden min-w-0">
+          <div class="grow rounded-box bg-base-200/40 overflow-hidden min-w-0 h-80 md:h-auto shrink-0 md:shrink">
             <CellGrid
               items={items()}
               cols={COLS}
@@ -234,7 +236,7 @@ export function Area() {
           </div>
 
           {/* Side panel: where you are, what you're inspecting, where you can go */}
-          <aside class="w-72 shrink-0 flex flex-col gap-3 overflow-y-auto pr-1">
+          <aside class="w-full md:w-72 shrink-0 flex flex-col gap-3 md:overflow-y-auto pr-1">
             <Show when={inFlightTravel()}>
               {(dest) => (
                 <div class="alert alert-info py-2 text-xs">

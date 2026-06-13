@@ -5,13 +5,25 @@ import { Icon } from "./Icon";
 // The current-action indicator: the in-flight idle action's kind and KC
 // progress from the game context (the action itself lives on the Actions
 // screen — this bar keeps it visible everywhere).
-export function TopBar(props: { showChat: boolean; onToggleChat: () => void }) {
+export function TopBar(props: {
+  showChat: boolean;
+  onToggleChat: () => void;
+  onOpenNav?: () => void;
+}) {
   const game = useGame();
   const action = () => game.world.action;
 
   return (
     <nav class="navbar w-full bg-base-300 min-h-12 px-4">
       <div class="w-full flex flex-row items-center gap-4">
+        {/* Mobile-only: open the off-canvas nav drawer (the rail is hidden). */}
+        <button
+          class="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-md border border-base-content/15 text-base-content/70 hover:text-base-content hover:border-base-content/30 md:hidden"
+          title="Open menu"
+          onClick={() => props.onOpenNav?.()}
+        >
+          <Icon name="Bars3" class="size-5" />
+        </button>
         <p class="my-auto font-mono text-sm tracking-tight uppercase">
           {action()?.kind ?? "idle"}
         </p>

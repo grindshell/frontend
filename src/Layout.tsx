@@ -8,6 +8,9 @@ import { ChatPanel } from "./components/ChatPanel";
 // panel stay mounted across navigation.
 export function Layout(props: ParentProps) {
   const [sidebarOpen, setSidebarOpen] = createSignal(true);
+  // The mobile off-canvas drawer is separate from the desktop collapse state:
+  // on mobile the rail is hidden by default and slides in over the content.
+  const [mobileNavOpen, setMobileNavOpen] = createSignal(false);
   const [showChat, setShowChat] = createSignal(true);
   // Vertical split between the screen content and the chat panel (percent of height).
   const [contentPct, setContentPct] = createSignal(72);
@@ -32,9 +35,25 @@ export function Layout(props: ParentProps) {
 
   return (
     <div class="h-screen flex bg-base-100 text-base-content overflow-hidden">
-      <Sidebar open={sidebarOpen()} setOpen={setSidebarOpen} />
+      {/* Mobile drawer backdrop: tap to dismiss. Desktop never renders it. */}
+      <Show when={mobileNavOpen()}>
+        <div
+          class="fixed inset-0 z-30 bg-black/50 md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      </Show>
+      <Sidebar
+        open={sidebarOpen()}
+        setOpen={setSidebarOpen}
+        mobileOpen={mobileNavOpen()}
+        closeMobile={() => setMobileNavOpen(false)}
+      />
       <div class="flex-1 flex flex-col min-w-0">
-        <TopBar showChat={showChat()} onToggleChat={() => setShowChat(!showChat())} />
+        <TopBar
+          showChat={showChat()}
+          onToggleChat={() => setShowChat(!showChat())}
+          onOpenNav={() => setMobileNavOpen(true)}
+        />
         <div class="flex-1 flex flex-col min-h-0">
           <div
             class="overflow-y-auto p-4"

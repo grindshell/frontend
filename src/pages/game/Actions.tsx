@@ -56,8 +56,8 @@ export function Actions() {
         </button>
       </header>
 
-      <div class="grow flex gap-4 overflow-hidden">
-        <div class="grow flex flex-col overflow-hidden">
+      <div class="grow flex flex-col md:flex-row gap-4 overflow-y-auto md:overflow-hidden">
+        <div class="grow flex flex-col min-h-0">
           <div role="tablist" class="tabs tabs-box w-fit mb-3">
             <For each={TABS}>
               {(t) => (
@@ -87,7 +87,7 @@ export function Actions() {
             </For>
           </div>
 
-          <div class="grow overflow-y-auto border border-base-300 rounded p-4">
+          <div class="grow min-h-0 overflow-y-auto border border-base-300 rounded p-4">
             <Switch>
               <Match when={tab() === "Combat"}>
                 <CombatTab />
@@ -764,7 +764,7 @@ function ActionLog() {
     })[kind] ?? "";
 
   return (
-    <div class="w-80 shrink-0 flex flex-col gap-2 overflow-hidden">
+    <div class="w-full md:w-80 shrink-0 flex flex-col gap-2 overflow-hidden h-72 md:h-auto">
       <ul
         ref={listEl}
         class="grow border border-base-300 rounded overflow-y-auto p-2 font-mono text-[12px] space-y-0.5"

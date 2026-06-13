@@ -218,7 +218,7 @@ function SpacerCard(props: { id: string; span: Span; api: DragApi; onRemove: (id
   return (
     <Show
       when={a.reorderOn}
-      fallback={<div aria-hidden style={spanStyle(props.span)} />}
+      fallback={<div aria-hidden class="ov-spacer" style={spanStyle(props.span)} />}
     >
       <div
         class={
@@ -435,7 +435,7 @@ export function Overview() {
 
       <div
         ref={gridEl}
-        class="grid grid-cols-12 flex-1 overflow-y-auto pr-1"
+        class="ov-grid grid grid-cols-12 flex-1 overflow-y-auto pr-1"
         style={{
           "grid-auto-rows": `${rowHeight()}px`,
           "grid-auto-flow": "row dense",

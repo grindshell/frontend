@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { useGame } from "../lib/game-context";
 import { Icon, type IconName } from "./Icon";
@@ -80,10 +80,29 @@ function ResourcesQuickView() {
   );
 }
 
-export function Sidebar(props: { open: boolean; setOpen: (v: boolean) => void }) {
+export function Sidebar(props: {
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  mobileOpen?: boolean;
+  closeMobile?: () => void;
+}) {
   const location = useLocation();
   const navigate = useNavigate();
   const game = useGame();
+
+  // Track the mobile breakpoint so the rail can render fully expanded inside the
+  // off-canvas drawer regardless of the desktop collapse state.
+  const [isMobile, setIsMobile] = createSignal(false);
+  onMount(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    onCleanup(() => mq.removeEventListener("change", update));
+  });
+  // Show icons + labels when the desktop rail is open OR we're in the mobile
+  // drawer (which is always full width when shown).
+  const expanded = () => isMobile() || props.open;
 
   const Item = (p: { r: Route }) => {
     const active = () => location.pathname === p.r.id;
@@ -92,15 +111,18 @@ export function Sidebar(props: { open: boolean; setOpen: (v: boolean) => void })
         <button
           class={
             "w-full flex items-center gap-3 px-3 py-2 rounded relative text-sm text-base-content/85 " +
-            (props.open ? "justify-start " : "justify-center ") +
+            (expanded() ? "justify-start " : "justify-center ") +
             (active() ? "bg-base-100 font-semibold" : "hover:bg-base-100/50")
           }
-          title={!props.open ? p.r.name : undefined}
-          onClick={() => navigate(p.r.id)}
+          title={!expanded() ? p.r.name : undefined}
+          onClick={() => {
+            navigate(p.r.id);
+            if (isMobile()) props.closeMobile?.();
+          }}
         >
           {active() && <span class="absolute inset-y-1 left-0 w-0.5 rounded-r bg-primary" />}
           <Icon name={p.r.icon} />
-          {props.open && <span class="truncate">{p.r.name}</span>}
+          {expanded() && <span class="truncate">{p.r.name}</span>}
         </button>
       </li>
     );
@@ -109,22 +131,27 @@ export function Sidebar(props: { open: boolean; setOpen: (v: boolean) => void })
   return (
     <aside
       class={
-        "shrink-0 bg-base-300 flex flex-col transition-[width] duration-200 " +
-        (props.open ? "w-56" : "w-14")
+        "bg-base-300 flex flex-col z-40 " +
+        // Mobile: fixed off-canvas drawer, full nav width, slides in/out.
+        "fixed inset-y-0 left-0 w-56 transition-transform duration-200 " +
+        (props.mobileOpen ? "translate-x-0 " : "-translate-x-full ") +
+        // Desktop: in-flow rail with a width-collapse transition.
+        "md:static md:translate-x-0 md:shrink-0 md:transition-[width] " +
+        (props.open ? "md:w-56" : "md:w-14")
       }
     >
       <ul class="menu w-full p-1.5">
         <li>
           <button
-            onClick={() => props.setOpen(!props.open)}
+            onClick={() => (isMobile() ? props.closeMobile?.() : props.setOpen(!props.open))}
             class={
               "w-full flex items-center gap-3 px-3 py-2 rounded hover:bg-base-100/50 text-sm " +
-              (props.open ? "justify-start" : "justify-center")
+              (expanded() ? "justify-start" : "justify-center")
             }
-            title={!props.open ? "Toggle sidebar" : undefined}
+            title={!expanded() ? "Toggle sidebar" : isMobile() ? "Close menu" : undefined}
           >
-            <Icon name="CodeBracketSquare" />
-            {props.open && <span class="font-mono">Grindshell</span>}
+            <Icon name={isMobile() ? "XMark" : "CodeBracketSquare"} />
+            {expanded() && <span class="font-mono">Grindshell</span>}
           </button>
         </li>
       </ul>
@@ -151,7 +178,7 @@ export function Sidebar(props: { open: boolean; setOpen: (v: boolean) => void })
             </Show>
           </ul>
         </Show>
-        <Show when={props.open}>
+        <Show when={expanded()}>
           <div class="divider my-0 mx-2" />
           <ResourcesQuickView />
         </Show>

@@ -41,3 +41,19 @@ body {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* On mobile, the Overview grid collapses to a single column so every card
+ * stacks vertically (in layout order). Cards keep their stored row span for
+ * height; spacers are dropped. The card sizes are set as inline grid styles,
+ * so the overrides need !important to win. Breakpoint matches Tailwind's md. */
+@media (max-width: 767px) {
+  .ov-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .ov-card {
+    grid-column: 1 / -1 !important;
+  }
+  .ov-spacer {
+    display: none !important;
+  }
+}

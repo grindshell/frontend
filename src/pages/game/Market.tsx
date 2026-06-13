@@ -170,9 +170,9 @@ export function Market() {
           </div>
         }
       >
-        <div class="grow flex gap-4 overflow-hidden">
-          {/* Goods picker */}
-          <aside class="w-60 shrink-0 flex flex-col rounded-box bg-base-200/40 overflow-hidden">
+        <div class="grow flex flex-col md:flex-row gap-4 overflow-y-auto md:overflow-hidden">
+          {/* Goods picker — a sidebar list on desktop, a dropdown on mobile. */}
+          <aside class="hidden md:flex w-60 shrink-0 flex-col rounded-box bg-base-200/40 overflow-hidden">
             <div class="px-3 py-2 text-[0.65rem] uppercase tracking-wide text-base-content/50 border-b border-base-content/10">
               Goods
             </div>
@@ -198,7 +198,21 @@ export function Market() {
           </aside>
 
           {/* Selected good */}
-          <div class="grow min-w-0 flex flex-col gap-3 overflow-y-auto pr-1">
+          <div class="grow min-w-0 flex flex-col gap-3 md:overflow-y-auto pr-1">
+            {/* Mobile goods selector (the desktop sidebar list is hidden). */}
+            <select
+              class="select select-sm w-full md:hidden"
+              value={selected() ?? ""}
+              onChange={(e) => setSelected(e.currentTarget.value)}
+            >
+              <For each={market()?.goods ?? []}>
+                {(g) => (
+                  <option value={g.id}>
+                    {g.name} · {fmt(goodBalance(inv(), g.id))}
+                  </option>
+                )}
+              </For>
+            </select>
             <Show
               when={selectedGood()}
               fallback={<p class="text-sm text-base-content/45 px-1">Pick a good to trade.</p>}
@@ -212,8 +226,8 @@ export function Market() {
                     </span>
                   </div>
 
-                  {/* Order book depth */}
-                  <div class="grid grid-cols-2 gap-3">
+                  {/* Order book depth — bids over asks on mobile. */}
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <BookSide title="Bids" tone="success" levels={book()?.bids ?? []} empty="No buyers yet." />
                     <BookSide title="Asks" tone="error" levels={book()?.asks ?? []} empty="No sellers yet." />
                   </div>
