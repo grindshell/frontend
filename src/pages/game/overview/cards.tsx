@@ -7,11 +7,14 @@ import {
   createMemo,
   createSignal,
   on,
+  onCleanup,
+  onMount,
   type JSX,
 } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { actionTarget, summarizeRewards, useGame } from "../../../lib/game-context";
 import type { Direction, MapZoneInfo } from "../../../lib/protocol";
+import { TickRateBadge } from "../../../components/TickRateBadge";
 import { CellGrid } from "@grindshell/ui-components";
 
 // Overview cards — condensed views of the underlying game pages. Each body
@@ -1093,6 +1096,84 @@ function LogCard(props: { span: Span; }) {
   );
 }
 
+/* ---------- EFFECTS ---------- */
+// The server-condition surface: the live global tick cadence / rate-limit
+// status (the `tickRate` push — overview.md "Dilation under load") plus the
+// player's active formation Zone Effects (the `effects` push), with a local
+// countdown seeded from the server's remaining-time baseline. The cadence line
+// tells the player whether rate limiting is rising or easing; the list below is
+// the same active-effects set the Inventory page shows.
+
+function EffectsCard(props: { span: Span; }) {
+  const game = useGame();
+  const T = () => tier(props.span);
+  const [nowMs, setNowMs] = createSignal(Date.now());
+  onMount(() => {
+    const h = setInterval(() => setNowMs(Date.now()), 1000);
+    onCleanup(() => clearInterval(h));
+  });
+  // Stamp an absolute expiry when the snapshot changes (not on each tick).
+  const stamped = createMemo(() => {
+    const at = Date.now();
+    return game.world.effects.map((e) => ({ ...e, expiresAtMs: at + e.remainingSecs * 1000 }));
+  });
+  const fmtLeft = (ms: number) => {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+  };
+
+  return (
+    <Switch>
+      <Match when={T() === "micro"}>
+        <div class="h-full flex flex-col items-center justify-center text-center gap-0.5">
+          <TickRateBadge condensed />
+          <div class="text-[10px] text-base-content/45">{stamped().length} active</div>
+        </div>
+      </Match>
+
+      <Match when={true}>
+        <div class="flex flex-col h-full gap-2 min-h-0">
+          {/* Server cadence / rate-limit status. */}
+          <div class="flex items-center justify-between gap-2 pb-2 border-b border-base-300/60 shrink-0">
+            <span class="text-[10px] uppercase tracking-wider text-base-content/45">cadence</span>
+            <TickRateBadge condensed={T() === "small"} />
+          </div>
+          {/* Active formation Zone Effects with a live countdown. */}
+          <ul class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5">
+            <For
+              each={stamped()}
+              fallback={
+                <li class="text-[11px] text-base-content/40 py-1">No active effects.</li>
+              }
+            >
+              {(e) => {
+                const left = () => e.expiresAtMs - nowMs();
+                return (
+                  <li class="bg-base-300/40 rounded px-2 py-1 flex items-center gap-2">
+                    <span class="badge badge-xs badge-success badge-soft shrink-0">{e.scope}</span>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-xs truncate">{e.name}</div>
+                      <Show when={T() === "large"}>
+                        <div class="text-[10px] text-base-content/45 font-mono truncate">{e.summary}</div>
+                      </Show>
+                    </div>
+                    <span
+                      class="font-mono text-[11px] tabular-nums shrink-0"
+                      classList={{ "text-warning": left() < 30000 }}
+                    >
+                      {fmtLeft(left())}
+                    </span>
+                  </li>
+                );
+              }}
+            </For>
+          </ul>
+        </div>
+      </Match>
+    </Switch>
+  );
+}
+
 /* ---------- the registry the Overview grid renders ---------- */
 export const CARDS: CardDef[] = [
   { id: "action", title: "Current Action", route: "/actions", defSpan: { col: 4, row: 2 }, Body: ActionCard },
@@ -1116,6 +1197,7 @@ export const CARDS: CardDef[] = [
   },
   { id: "log", title: "Activity Log", route: "/actions", defSpan: { col: 8, row: 2 }, badge: "LIVE", Body: LogCard },
   { id: "formation", title: "Formation", route: "/formation", defSpan: { col: 4, row: 2 }, Body: FormationCard },
+  { id: "effects", title: "Effects", route: "/inventory", defSpan: { col: 4, row: 2 }, Body: EffectsCard },
 ];
 
 export const CARDS_BY_ID: Record<string, CardDef> = Object.fromEntries(

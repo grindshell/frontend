@@ -2,47 +2,79 @@ import { For, Show, createEffect, createSignal, type JSX } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { useNavigate } from "@solidjs/router";
 import { Icon } from "../../../components/Icon";
-import { CARDS, CARDS_BY_ID, type Span } from "./cards";
+import { CARDS, CARDS_BY_ID, type CardDef, type Span } from "./cards";
 
-/* ---------------- layout model + persistence ---------------- */
+/* ---------------- layout model + persistence ----------------
 
-type Layout = { order: string[]; sizes: Record<string, Span> };
+   The layout is a list of *instances* (tiles), each a unique `iid` bound to a
+   card type (`card`: a CARDS id, or the literal "spacer"). Instances are
+   independent, so the same card can appear multiple times at different sizes,
+   any tile can be deleted, and new ones are added from the Arrange dropdown. */
 
-const LS_LAYOUT = "grindshell.overview.layout.v2";
+const SPACER = "spacer";
+type Tile = { iid: string; card: string };
+type Layout = { tiles: Tile[]; sizes: Record<string, Span> };
+
+const LS_LAYOUT = "grindshell.overview.layout.v3";
+const LS_LAYOUT_V2 = "grindshell.overview.layout.v2";
 const SPACER_SIZE: Span = { col: 2, row: 1 };
 
-const isSpacerId = (id: string) => id.startsWith("spacer-");
-let spacerCounter = 0;
-const newSpacerId = () => {
-  spacerCounter += 1;
-  return `spacer-${Date.now().toString(36)}-${spacerCounter}`;
+let iidCounter = 0;
+const newIid = () => `t-${Date.now().toString(36)}-${(iidCounter++).toString(36)}`;
+
+const isSpacer = (card: string) => card === SPACER;
+const spanForCard = (card: string): Span =>
+  isSpacer(card) ? { ...SPACER_SIZE } : { ...CARDS_BY_ID[card].defSpan };
+
+const defaultLayout = (): Layout => {
+  const tiles = CARDS.map((c) => ({ iid: newIid(), card: c.id }));
+  const sizes = Object.fromEntries(tiles.map((t) => [t.iid, spanForCard(t.card)]));
+  return { tiles, sizes };
 };
 
-const defaultLayout = (): Layout => ({
-  order: CARDS.map((c) => c.id),
-  sizes: Object.fromEntries(CARDS.map((c) => [c.id, { ...c.defSpan }])),
-});
+/** A card id is renderable when it's a known card or the spacer sentinel. */
+const knownCard = (card: string) => card === SPACER || !!CARDS_BY_ID[card];
 
 function loadLayout(): Layout {
+  // v3: the instance model — read as-is, dropping tiles whose card type no
+  // longer exists.
   try {
     const saved = JSON.parse(localStorage.getItem(LS_LAYOUT) || "null");
-    if (saved && Array.isArray(saved.order) && saved.sizes) {
-      const def = defaultLayout();
-      const known = (id: string) => !!CARDS_BY_ID[id] || isSpacerId(id);
-      const filteredSaved: string[] = saved.order.filter(known);
-      // re-append any real cards added since the layout was persisted
-      const missing = def.order.filter((id) => !filteredSaved.includes(id));
-      const order = [...filteredSaved, ...missing];
-      const sizes: Record<string, Span> = { ...def.sizes };
-      for (const id of order) {
-        if (saved.sizes[id]) sizes[id] = saved.sizes[id];
-        else if (isSpacerId(id)) sizes[id] = { ...SPACER_SIZE };
+    if (saved && Array.isArray(saved.tiles) && saved.sizes) {
+      const tiles: Tile[] = saved.tiles
+        .filter((t: Tile) => t && typeof t.iid === "string" && knownCard(t.card))
+        .map((t: Tile) => ({ iid: t.iid, card: t.card }));
+      if (tiles.length) {
+        const sizes: Record<string, Span> = {};
+        for (const t of tiles) sizes[t.iid] = saved.sizes[t.iid] ?? spanForCard(t.card);
+        return { tiles, sizes };
       }
-      return { order, sizes };
     }
   } catch {
-    /* fall through to default */
+    /* fall through */
   }
+
+  // v2 → v3 migration: the old model keyed order/sizes by the card-type id
+  // (spacers were "spacer-…" ids). Each entry becomes a fresh instance,
+  // preserving its stored size, so an existing arrangement survives the upgrade.
+  try {
+    const old = JSON.parse(localStorage.getItem(LS_LAYOUT_V2) || "null");
+    if (old && Array.isArray(old.order) && old.sizes) {
+      const tiles: Tile[] = [];
+      const sizes: Record<string, Span> = {};
+      for (const id of old.order as string[]) {
+        const card = id.startsWith("spacer-") ? SPACER : id;
+        if (!knownCard(card)) continue;
+        const iid = newIid();
+        tiles.push({ iid, card });
+        sizes[iid] = old.sizes[id] ?? spanForCard(card);
+      }
+      if (tiles.length) return { tiles, sizes };
+    }
+  } catch {
+    /* fall through */
+  }
+
   return defaultLayout();
 }
 
@@ -63,19 +95,25 @@ const ArrowOutIcon = () => (
     <path stroke-linecap="round" stroke-linejoin="round" d="M7 17 17 7M10 7h7v7" />
   </svg>
 );
+const CloseIcon = () => (
+  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5">
+    <path d="M6 6 18 18M18 6 6 18" stroke-linecap="round" />
+  </svg>
+);
 
 type Axis = "x" | "y" | "xy";
 
 type DragApi = {
   reorderOn: boolean;
-  isDragging: (id: string) => boolean;
-  isDropTarget: (id: string) => boolean;
-  onDragStart: (id: string, e: DragEvent) => void;
-  onDragOver: (id: string, e: DragEvent) => void;
-  onDragLeave: (id: string) => void;
-  onDrop: (id: string, e: DragEvent) => void;
+  isDragging: (iid: string) => boolean;
+  isDropTarget: (iid: string) => boolean;
+  onDragStart: (iid: string, e: DragEvent) => void;
+  onDragOver: (iid: string, e: DragEvent) => void;
+  onDragLeave: (iid: string) => void;
+  onDrop: (iid: string, e: DragEvent) => void;
   onDragEnd: () => void;
-  onResizeStart: (id: string, e: MouseEvent, axis: Axis) => void;
+  onResizeStart: (iid: string, e: MouseEvent, axis: Axis) => void;
+  onRemove: (iid: string) => void;
 };
 
 function spanStyle(span: Span): JSX.CSSProperties {
@@ -83,6 +121,21 @@ function spanStyle(span: Span): JSX.CSSProperties {
     "grid-column": `span ${span.col} / span ${span.col}`,
     "grid-row": `span ${span.row} / span ${span.row}`,
   };
+}
+
+function RemoveButton(props: { onRemove: () => void; title: string }) {
+  return (
+    <button
+      class="w-5 h-5 rounded flex items-center justify-center text-base-content/40 hover:text-error hover:bg-base-300/60 transition-colors"
+      title={props.title}
+      onClick={(e) => {
+        e.stopPropagation();
+        props.onRemove();
+      }}
+    >
+      <CloseIcon />
+    </button>
+  );
 }
 
 function ResizeHandles(props: { id: string; api: DragApi; tone: string }) {
@@ -121,10 +174,8 @@ function ResizeHandles(props: { id: string; api: DragApi; tone: string }) {
 }
 
 function Card(props: {
-  id: string;
-  title: string;
-  badge?: string;
-  route: string;
+  iid: string;
+  card: CardDef;
   span: Span;
   api: DragApi;
   onNavigate: (route: string) => void;
@@ -137,19 +188,19 @@ function Card(props: {
       class={
         "ov-card group relative flex flex-col bg-base-200 rounded-lg border overflow-hidden " +
         "transition-[border-color,opacity,box-shadow] min-h-0 " +
-        (a.isDragging(props.id) ? "opacity-40 " : "") +
-        (a.isDropTarget(props.id) ? "border-primary " : "border-base-300 ") +
+        (a.isDragging(props.iid) ? "opacity-40 " : "") +
+        (a.isDropTarget(props.iid) ? "border-primary " : "border-base-300 ") +
         (a.reorderOn
           ? "ring-1 ring-base-content/10 hover:ring-primary/50"
           : "hover:border-base-content/30")
       }
       style={{ ...spanStyle(props.span), "container-type": "size" }}
       draggable={gripDraggable()}
-      data-card-id={props.id}
-      onDragStart={(e) => a.onDragStart(props.id, e)}
-      onDragOver={(e) => a.onDragOver(props.id, e)}
-      onDragLeave={() => a.onDragLeave(props.id)}
-      onDrop={(e) => a.onDrop(props.id, e)}
+      data-card-id={props.iid}
+      onDragStart={(e) => a.onDragStart(props.iid, e)}
+      onDragOver={(e) => a.onDragOver(props.iid, e)}
+      onDragLeave={() => a.onDragLeave(props.iid)}
+      onDrop={(e) => a.onDrop(props.iid, e)}
       onDragEnd={() => {
         setGripDraggable(false);
         a.onDragEnd();
@@ -163,11 +214,11 @@ function Card(props: {
         }
         role={a.reorderOn ? undefined : "button"}
         tabindex={a.reorderOn ? undefined : 0}
-        onClick={() => !a.reorderOn && props.onNavigate(props.route)}
+        onClick={() => !a.reorderOn && props.onNavigate(props.card.route)}
         onKeyDown={(e) => {
           if (!a.reorderOn && (e.key === "Enter" || e.key === " ")) {
             e.preventDefault();
-            props.onNavigate(props.route);
+            props.onNavigate(props.card.route);
           }
         }}
       >
@@ -184,34 +235,37 @@ function Card(props: {
           </span>
         </Show>
         <span class="text-[11px] uppercase tracking-[0.14em] font-medium text-base-content/60 truncate">
-          {props.title}
+          {props.card.title}
         </span>
-        <Show when={props.badge}>
+        <Show when={props.card.badge && !a.reorderOn}>
           <span class="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded bg-base-300 text-base-content/70">
-            {props.badge}
+            {props.card.badge}
           </span>
         </Show>
-        <Show when={!a.reorderOn && !props.badge}>
+        <Show when={!a.reorderOn && !props.card.badge}>
           <span class="ml-auto opacity-0 group-hover:opacity-100 transition-opacity text-base-content/40">
             <ArrowOutIcon />
           </span>
         </Show>
         <Show when={a.reorderOn}>
-          <span class="ml-auto font-mono text-[10px] text-base-content/40">
-            {props.span.col}×{props.span.row}
+          <span class="ml-auto flex items-center gap-1.5">
+            <span class="font-mono text-[10px] text-base-content/40">
+              {props.span.col}×{props.span.row}
+            </span>
+            <RemoveButton onRemove={() => a.onRemove(props.iid)} title="Remove card" />
           </span>
         </Show>
       </header>
       <div class="flex-1 min-h-0 p-3 overflow-hidden">{props.children}</div>
 
       <Show when={a.reorderOn}>
-        <ResizeHandles id={props.id} api={a} tone="hover:bg-primary/60" />
+        <ResizeHandles id={props.iid} api={a} tone="hover:bg-primary/60" />
       </Show>
     </div>
   );
 }
 
-function SpacerCard(props: { id: string; span: Span; api: DragApi; onRemove: (id: string) => void }) {
+function SpacerCard(props: { iid: string; span: Span; api: DragApi }) {
   const [gripDraggable, setGripDraggable] = createSignal(false);
   const a = props.api;
 
@@ -224,18 +278,18 @@ function SpacerCard(props: { id: string; span: Span; api: DragApi; onRemove: (id
         class={
           "ov-spacer relative flex items-center justify-center rounded-lg min-h-0 border-2 border-dashed " +
           "transition-[border-color,opacity] " +
-          (a.isDragging(props.id) ? "opacity-30 " : "") +
-          (a.isDropTarget(props.id)
+          (a.isDragging(props.iid) ? "opacity-30 " : "") +
+          (a.isDropTarget(props.iid)
             ? "border-primary bg-primary/5"
             : "border-base-content/15 bg-base-content/[0.02] hover:border-base-content/30")
         }
         style={spanStyle(props.span)}
         draggable={gripDraggable()}
-        data-card-id={props.id}
-        onDragStart={(e) => a.onDragStart(props.id, e)}
-        onDragOver={(e) => a.onDragOver(props.id, e)}
-        onDragLeave={() => a.onDragLeave(props.id)}
-        onDrop={(e) => a.onDrop(props.id, e)}
+        data-card-id={props.iid}
+        onDragStart={(e) => a.onDragStart(props.iid, e)}
+        onDragOver={(e) => a.onDragOver(props.iid, e)}
+        onDragLeave={() => a.onDragLeave(props.iid)}
+        onDrop={(e) => a.onDrop(props.iid, e)}
         onDragEnd={() => {
           setGripDraggable(false);
           a.onDragEnd();
@@ -256,20 +310,11 @@ function SpacerCard(props: { id: string; span: Span; api: DragApi; onRemove: (id
           </span>
         </div>
 
-        <button
-          class="absolute top-1.5 right-1.5 w-5 h-5 rounded flex items-center justify-center text-base-content/40 hover:text-error hover:bg-base-300/60 transition-colors z-10"
-          title="Remove spacer"
-          onClick={(e) => {
-            e.stopPropagation();
-            props.onRemove(props.id);
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M6 6 18 18M18 6 6 18" stroke-linecap="round" />
-          </svg>
-        </button>
+        <div class="absolute top-1.5 right-1.5 z-10 pointer-events-auto">
+          <RemoveButton onRemove={() => a.onRemove(props.iid)} title="Remove spacer" />
+        </div>
 
-        <ResizeHandles id={props.id} api={a} tone="hover:bg-primary/60" />
+        <ResizeHandles id={props.iid} api={a} tone="hover:bg-primary/60" />
       </div>
     </Show>
   );
@@ -288,27 +333,28 @@ export function Overview() {
   let gridEl: HTMLDivElement | undefined;
 
   createEffect(() => {
-    localStorage.setItem(LS_LAYOUT, JSON.stringify({ order: layout.order, sizes: layout.sizes }));
+    localStorage.setItem(LS_LAYOUT, JSON.stringify({ tiles: layout.tiles, sizes: layout.sizes }));
   });
 
   const rowHeight = () => (density() === "compact" ? 92 : 110);
   const gap = () => (density() === "compact" ? 8 : 12);
 
-  const addSpacer = () => {
-    const id = newSpacerId();
+  // Append a new instance (a card or a spacer) at the end of the grid.
+  const addTile = (card: string) => {
+    const iid = newIid();
     setLayout(
       produce((l) => {
-        l.order.push(id);
-        l.sizes[id] = { ...SPACER_SIZE };
+        l.tiles.push({ iid, card });
+        l.sizes[iid] = spanForCard(card);
       }),
     );
   };
 
-  const removeSpacer = (id: string) => {
+  const removeTile = (iid: string) => {
     setLayout(
       produce((l) => {
-        l.order = l.order.filter((x) => x !== id);
-        delete l.sizes[id];
+        l.tiles = l.tiles.filter((t) => t.iid !== iid);
+        delete l.sizes[iid];
       }),
     );
   };
@@ -317,10 +363,12 @@ export function Overview() {
     if (fromId === toId) return;
     setLayout(
       produce((l) => {
-        const next = l.order.filter((x) => x !== fromId);
-        const idx = next.indexOf(toId);
-        next.splice(idx, 0, fromId);
-        l.order = next;
+        const moving = l.tiles.find((t) => t.iid === fromId);
+        if (!moving) return;
+        const next = l.tiles.filter((t) => t.iid !== fromId);
+        const idx = next.findIndex((t) => t.iid === toId);
+        next.splice(idx < 0 ? next.length : idx, 0, moving);
+        l.tiles = next;
       }),
     );
   };
@@ -390,6 +438,14 @@ export function Overview() {
       setDropTarget(null);
     },
     onResizeStart,
+    onRemove: removeTile,
+  };
+
+  // Close the Arrange "add" dropdown after a pick (it stays open on
+  // focus-within otherwise), then append the chosen tile.
+  const addAndClose = (card: string) => {
+    addTile(card);
+    (document.activeElement as HTMLElement | null)?.blur();
   };
 
   return (
@@ -399,16 +455,42 @@ export function Overview() {
         <span class="text-xs text-base-content/45">// condensed view of all systems</span>
         <div class="ml-auto flex items-center gap-2">
           <Show when={reorderOn()}>
-            <button
-              onClick={addSpacer}
-              class="inline-flex items-center gap-1 text-[11px] text-base-content/60 hover:text-base-content border border-base-300 hover:border-base-content/30 px-2 py-1 rounded-md"
-              title="Add a spacer to push cards apart"
-            >
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 5v14M5 12h14" stroke-linecap="round" />
-              </svg>
-              <span>spacer</span>
-            </button>
+            {/* Add any card (or a spacer) from the catalog — appended to the
+                end of the grid, where it can be dragged and resized. */}
+            <div class="dropdown dropdown-end">
+              <div
+                tabindex="0"
+                role="button"
+                class="inline-flex items-center gap-1 text-[11px] text-base-content/60 hover:text-base-content border border-base-300 hover:border-base-content/30 px-2 py-1 rounded-md cursor-pointer"
+                title="Add a card or spacer to the grid"
+              >
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+                </svg>
+                <span>add</span>
+              </div>
+              <ul
+                tabindex="0"
+                class="dropdown-content menu menu-sm bg-base-200 rounded-box z-20 mt-1 w-48 p-1 shadow-lg border border-base-300 max-h-80 overflow-y-auto flex-nowrap"
+              >
+                <For each={CARDS}>
+                  {(c) => (
+                    <li>
+                      <button onClick={() => addAndClose(c.id)}>
+                        <span class="truncate">{c.title}</span>
+                        <Show when={c.badge}>
+                          <span class="ml-auto text-[9px] font-mono text-base-content/40">{c.badge}</span>
+                        </Show>
+                      </button>
+                    </li>
+                  )}
+                </For>
+                <li class="menu-title text-[10px] pt-1">layout</li>
+                <li>
+                  <button onClick={() => addAndClose(SPACER)}>Spacer</button>
+                </li>
+              </ul>
+            </div>
             <button
               onClick={() => setLayout(defaultLayout())}
               class="text-[11px] text-base-content/50 hover:text-base-content underline-offset-2 hover:underline px-2 py-1"
@@ -442,24 +524,20 @@ export function Overview() {
           gap: `${gap()}px`,
         }}
       >
-        <For each={layout.order}>
-          {(id) => (
+        <For each={layout.tiles}>
+          {(tile) => (
             <Show
-              when={!isSpacerId(id)}
-              fallback={
-                <SpacerCard id={id} span={layout.sizes[id]} api={api} onRemove={removeSpacer} />
-              }
+              when={!isSpacer(tile.card)}
+              fallback={<SpacerCard iid={tile.iid} span={layout.sizes[tile.iid]} api={api} />}
             >
               <Card
-                id={id}
-                title={CARDS_BY_ID[id].title}
-                badge={CARDS_BY_ID[id].badge}
-                route={CARDS_BY_ID[id].route}
-                span={layout.sizes[id]}
+                iid={tile.iid}
+                card={CARDS_BY_ID[tile.card]}
+                span={layout.sizes[tile.iid]}
                 api={api}
                 onNavigate={navigate}
               >
-                {CARDS_BY_ID[id].Body({ get span() { return layout.sizes[id]; } })}
+                {CARDS_BY_ID[tile.card].Body({ get span() { return layout.sizes[tile.iid]; } })}
               </Card>
             </Show>
           )}

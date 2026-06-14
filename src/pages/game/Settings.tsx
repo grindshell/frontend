@@ -1,5 +1,6 @@
 import { For, createSignal, type ParentProps } from "solid-js";
 import { THEMES, loadTheme, setTheme } from "../../lib/theme";
+import { tickPulseEnabled, setTickPulseEnabled } from "../../lib/prefs";
 import { clearAuth } from "../../lib/auth";
 
 export function Settings() {
@@ -41,6 +42,7 @@ export function Settings() {
             <button
               class="btn btn-sm btn-soft"
               onClick={() => {
+                localStorage.removeItem("grindshell.overview.layout.v3");
                 localStorage.removeItem("grindshell.overview.layout.v2");
                 window.location.reload();
               }}
@@ -48,6 +50,24 @@ export function Settings() {
               Reset card layout
             </button>
             <p class="label text-base-content/45">Restores the default Overview grid.</p>
+          </fieldset>
+        </Tile>
+
+        <Tile>
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Action bar</legend>
+            <label class="label cursor-pointer justify-start gap-3 py-0">
+              <input
+                type="checkbox"
+                class="toggle toggle-sm toggle-primary"
+                checked={tickPulseEnabled()}
+                onChange={(e) => setTickPulseEnabled(e.currentTarget.checked)}
+              />
+              <span class="label-text">Tick pulse</span>
+            </label>
+            <p class="label text-base-content/45">
+              The glow that sweeps the progress bar once per idle tick.
+            </p>
           </fieldset>
         </Tile>
 

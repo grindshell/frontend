@@ -455,6 +455,12 @@ export type EffectView = {
   remainingSecs: number;
 };
 
+/** The direction the global tick interval moved relative to the value the
+ * client last heard (overview.md "Dilation under load"). `rising` = the tick
+ * lengthened (rate limiting increasing), `falling` = it shortened (easing),
+ * `steady` = unchanged / the first report. */
+export type TickTrend = "steady" | "rising" | "falling";
+
 /** One attack within an idle-combat round (`AttackReport`), reported in actual
  * Speed order — the first entry struck first. */
 export type AttackReport = {
@@ -631,6 +637,14 @@ export type ServerMessage =
   // designation"). Pushed once at connect; a UI hint for showing the
   // admin/moderation surfaces (the server re-authorizes every command).
   | { t: "adminStatus"; isAdmin: boolean; isModerator: boolean }
+  // The live global tick cadence (overview.md "Ticks"): `intervalMs` is the
+  // current expected tick duration (the "expected idle tick time" the action
+  // bar reflects), `floorMs` the 3-second hard floor it dilates above under
+  // load, and `trend` which way it just moved versus the last value heard —
+  // `rising` (rate limiting increasing), `falling` (easing), or `steady`.
+  // Pushed at connect / on `requestState` (initial update) and broadcast to
+  // every client whenever it changes (overview.md "Dilation under load").
+  | { t: "tickRate"; intervalMs: number; floorMs: number; trend: TickTrend }
   // A room message was revoked (chat.md "Enforcement": Message revocation):
   // remove the room message with this id from the rendered transcript.
   // Broadcast to every connected client; ignore ids never seen.

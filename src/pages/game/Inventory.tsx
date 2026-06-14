@@ -2,6 +2,7 @@ import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-j
 import { useGame } from "../../lib/game-context";
 import type { ItemStackView } from "../../lib/protocol";
 import { STAT_KEYS, failingReqs, statsSummary } from "../../lib/stats";
+import { TickRateBadge } from "../../components/TickRateBadge";
 
 // The inventory screen: the player's committed holdings (inventory.md), live
 // from the server's authoritative `inventory` push, plus the gear/equipment
@@ -85,6 +86,19 @@ export function Inventory() {
                 </div>
               )}
             </For>
+          </div>
+        </div>
+
+        {/* Server cadence / rate-limit status (overview.md "Dilation under
+            load"): the live expected tick interval and whether rate limiting is
+            rising or easing — the same signal the Overview Effects card shows. */}
+        <div>
+          <p class="text-xs text-base-content/45 mb-1 px-1">Server cadence</p>
+          <div class="bg-base-200/40 rounded-box px-3 py-2 flex items-center gap-3">
+            <TickRateBadge />
+            <span class="text-[10px] text-base-content/40 ml-auto">
+              ticks dilate above a 3s floor under load
+            </span>
           </div>
         </div>
 

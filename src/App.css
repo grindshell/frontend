@@ -42,6 +42,45 @@ body {
   background: transparent;
 }
 
+/* The action progress bar's tick-cadence glow (overview.md "Ticks"): a faint
+ * primary sheen that sweeps left → right across the bar once per idle tick, so
+ * its travel time is the live expected tick interval (0 → N seconds, N = 3 at
+ * the floor, longer when the server dilates under load). Applied to an overlay
+ * clipped to the bar; the duration is supplied inline as `--tick-ms`, and the
+ * TopBar restarts the sweep on each tick so it stays in step with the server. */
+@keyframes tick-glow {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+.tick-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 9999px;
+  /* A bright, near-white band (a light tint of primary) rather than primary
+   * itself, so the sweep stays visible even when the bar is almost full and the
+   * fill underneath is solid primary. */
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklab, white 72%, var(--color-primary)) 50%,
+    transparent 100%
+  );
+  animation: tick-glow var(--tick-ms, 3000ms) ease-in-out infinite;
+}
+
 /* On mobile, the Overview grid collapses to a single column so every card
  * stacks vertically (in layout order). Cards keep their stored row span for
  * height; spacers are dropped. The card sizes are set as inline grid styles,

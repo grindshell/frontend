@@ -1,5 +1,6 @@
-import { Show } from "solid-js";
+import { Show, createEffect } from "solid-js";
 import { actionTarget, useGame } from "../lib/game-context";
+import { tickPulseEnabled } from "../lib/prefs";
 import { Icon } from "./Icon";
 
 // The current-action indicator: the in-flight idle action's kind and KC
@@ -12,6 +13,23 @@ export function TopBar(props: {
 }) {
   const game = useGame();
   const action = () => game.world.action;
+  // The tick-cadence glow period: the live expected tick interval (overview.md
+  // "Ticks"), 3s at the floor and longer when the server dilates under load.
+  const tickMs = () => game.world.tickRate?.intervalMs ?? 3000;
+
+  // Re-sync the glow sweep to the server tick: each `actionTick` bumps
+  // `world.tickAt`, and restarting the CSS animation here realigns the sweep so
+  // it crosses the bar once per idle tick rather than drifting from a
+  // free-running clock.
+  let glowEl: HTMLDivElement | undefined;
+  createEffect(() => {
+    game.world.tickAt; // dependency: a tick just landed
+    const el = glowEl;
+    if (!el) return;
+    el.style.animation = "none";
+    void el.offsetWidth; // force reflow so the animation restarts
+    el.style.animation = "";
+  });
 
   return (
     <nav class="navbar w-full bg-base-300 min-h-12 px-4">
@@ -28,11 +46,17 @@ export function TopBar(props: {
           {action()?.kind ?? "idle"}
         </p>
         <div class="w-full my-auto">
-          <progress
-            class="progress progress-primary w-full h-1.5"
-            max={action()?.kcTarget ?? 100}
-            value={action()?.kcDone ?? 0}
-          />
+          {/* The bar plus a clipped overlay carrying the left→right tick sweep. */}
+          <div class="relative w-full overflow-hidden rounded-full">
+            <progress
+              class="progress progress-primary w-full h-1.5 block"
+              max={action()?.kcTarget ?? 100}
+              value={action()?.kcDone ?? 0}
+            />
+            <Show when={action() && tickPulseEnabled()}>
+              <div ref={glowEl} class="tick-glow" style={{ "--tick-ms": `${tickMs()}ms` }} />
+            </Show>
+          </div>
         </div>
         <span class="font-mono text-xs text-base-content/55 shrink-0">
           <Show when={action()} fallback={"no action"}>

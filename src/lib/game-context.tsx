@@ -57,6 +57,7 @@ import type {
   ReportView,
   RewardsView,
   ServerMessage,
+  TickTrend,
   UnitView,
   ZonePlayerView,
 } from "./protocol";
@@ -258,6 +259,15 @@ type WorldState = {
   /** Active formation-scoped Zone Effects (the `effects` push); authoritative,
    * replaced wholesale. Empty until the first push. */
   effects: EffectView[];
+  /** The live global tick cadence (the `tickRate` push, overview.md "Ticks"):
+   * the current expected tick interval in ms (the "expected idle tick time"),
+   * the 3-second floor it dilates above under load, and the latest trend
+   * (rate limiting rising / falling / steady). Null until the first push
+   * (offline). Drives the action-bar tick glow and the rate-limit surfaces. */
+  tickRate: { intervalMs: number; floorMs: number; trend: TickTrend } | null;
+  /** A monotonic counter bumped on every `actionTick`, so the action bar can
+   * re-sync its tick-cadence glow to the moment a tick lands. */
+  tickAt: number;
   /** Whether this connection's account is a designated admin (the `adminStatus`
    * push, server-status.md). UI hint for showing the admin surface; the server
    * re-checks the sudoers designation on every command. False until pushed /
@@ -515,6 +525,8 @@ export function GameProvider(props: ParentProps) {
     roster: null,
     formation: null,
     effects: [],
+    tickRate: null,
+    tickAt: 0,
     isAdmin: false,
     isModerator: false,
     profile: null,
@@ -924,7 +936,20 @@ export function GameProvider(props: ParentProps) {
         // Authoritative snapshot: replace the active-effect set.
         setWorld("effects", msg.effects);
         break;
+      case "tickRate":
+        // The live tick cadence (overview.md "Ticks"): the action-bar glow
+        // reads `intervalMs`, the Effects surfaces read the trend.
+        setWorld("tickRate", {
+          intervalMs: msg.intervalMs,
+          floorMs: msg.floorMs,
+          trend: msg.trend,
+        });
+        break;
       case "actionTick": {
+        // A tick landed: advance the sync counter so the action-bar glow
+        // restarts its cadence pulse in step with the server (the global tick
+        // is what every action progresses on).
+        setWorld("tickAt", (n) => n + 1);
         const act = world.action;
         if (act) {
           // Fold the delta over the baseline; absent fields are unchanged.
