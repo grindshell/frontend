@@ -235,6 +235,18 @@ export function ChatPanel(props: { onCollapse?: () => void }) {
                 )}
               </For>
             </Show>
+            {/* Newest-first, so older history lives at the bottom: page back
+                from here (chat.md "Message history"). */}
+            <Show when={!isDms() && game.historyHasMore(game.chat.activeRoom)}>
+              <li class="text-center pt-1">
+                <button
+                  class="btn btn-ghost btn-xs text-base-content/55"
+                  onClick={() => game.loadOlderHistory(game.chat.activeRoom)}
+                >
+                  Load older messages
+                </button>
+              </li>
+            </Show>
           </ul>
         </div>
       </div>

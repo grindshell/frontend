@@ -30,6 +30,7 @@ import { config } from "./config";
 import { Connection, type ConnStatus } from "./connection";
 import type {
   ActionView,
+  ChatHistoryMessage,
   ClientData,
   CombatView,
   CurrenciesView,
@@ -44,8 +45,11 @@ import type {
   ItemStackView,
   MapZoneInfo,
   ModLogEntryView,
+  ModRoomMessageView,
   OrderLevel,
   OrderView,
+  RankMetricView,
+  RankRow,
   ReportView,
   RewardsView,
   ServerMessage,
@@ -82,6 +86,10 @@ type ChatState = {
   rooms: string[];
   activeRoom: string;
   byRoom: Record<string, ChatEntry[]>;
+  /** Per-room history load state (chat.md "Message history"): an entry exists
+   * once the room's backlog has been fetched, and `hasMore` says whether older
+   * messages remain to page back to. The DM bucket is never tracked here. */
+  history: Record<string, { hasMore: boolean }>;
 };
 
 /** One line of the action log (the Actions screen's right-hand column). */
@@ -135,6 +143,49 @@ export type MarketState = {
   myOrders: OrderView[];
 };
 
+/** One cached rankings board page (a `rankingsPage` answer). */
+export type RankingsBoard = {
+  metric: string;
+  metricName: string;
+  page: number;
+  total: number;
+  hasMore: boolean;
+  rows: RankRow[];
+};
+
+/** The rankings client slice (rankings.md). The server rebuilds the boards on a
+ * fixed 15-minute wall-clock cadence, so every board page seen within the
+ * current window is **cached** and served instantly; the cache is dropped when
+ * the wall-clock window rolls (a new bucket), matching the server's rebuild. */
+export type RankingsState = {
+  /** The selectable metrics (stats + skills + knowledge); fixed for a build. */
+  metrics: RankMetricView[];
+  /** The 15-minute wall-clock bucket `boards`/`playerAt` belong to
+   * (`floor(epochMs / 15min)`); a change invalidates them. */
+  bucket: number;
+  /** Cached board pages for the current bucket, keyed `${metric}:${page}`. */
+  boards: Record<string, RankingsBoard>;
+  /** The last `findRankingPlayer` answer (this bucket), or null. */
+  playerAt: {
+    metric: string;
+    username: string;
+    found: boolean;
+    rank: number | null;
+    page: number | null;
+    value: number | null;
+  } | null;
+};
+
+/** The rankings wall-clock cache period: 15 minutes, matching the backend's
+ * board-rebuild cadence (rankings.md "Freshness"). */
+export const RANKINGS_BUCKET_MS = 15 * 60 * 1000;
+
+/** The 15-minute wall-clock bucket index for an epoch-ms timestamp. Aligned to
+ * the same `:00/:15/:30/:45` boundaries the backend rebuilds on (both bucket
+ * off the Unix epoch). */
+export const rankingsBucketOf = (epochMs: number): number =>
+  Math.floor(epochMs / RANKINGS_BUCKET_MS);
+
 /** Total use-based XP accrued across a tally's `(unit, target)` gains. */
 export const totalXp = (r: RewardsView): number =>
   (r.experience ?? []).reduce((sum, e) => sum + e.amount, 0);
@@ -186,6 +237,10 @@ type WorldState = {
    * and the player's own active orders across all goods. Null until the first
    * `marketGoods` push (offline mode). */
   market: MarketState | null;
+  /** The global rankings (rankings.md): the metric catalog, the board page in
+   * view, and the last player-search answer. The catalog is empty and the
+   * board/playerAt null until requested (offline mode). */
+  rankings: RankingsState;
   /** Committed holdings; null until the first server push (offline mode). */
   inventory: InventoryState | null;
   /** Owned units (the `roster` push); null until the first server push. */
@@ -207,15 +262,26 @@ type WorldState = {
    * (chat.md "Moderator designation"); same push, same UI-hint caveats. */
   isModerator: boolean;
   /** The last `chatProfile` answer (chat.md "Player profiles"): the looked-up
-   * player's username (null for the requester's own guest account) and live
-   * online flag. Null until a lookup answers / after a new lookup starts. */
-  profile: { username: string | null; online: boolean } | null;
+   * player's username (null for the requester's own guest account), live online
+   * flag, and account id — present only where the requester may see it (their
+   * own always, anyone's when staff), null otherwise. Null until a lookup
+   * answers / after a new lookup starts. */
+  profile: { username: string | null; online: boolean; accountId: number | null } | null;
   /** The current page of the enforcement log (the moderation view; staff
    * only). Replaced per `modLogPage` push; null until requested. */
   modLog: { page: number; hasMore: boolean; entries: ModLogEntryView[] } | null;
   /** The current page of the pending report queue (staff only). Replaced per
    * `modReportsPage` push; null until requested. */
   modReports: { page: number; hasMore: boolean; reports: ReportView[] } | null;
+  /** The current page of the moderation room-message browser (chat.md
+   * "Logging"; staff only): the room being viewed and its newest-first page.
+   * Replaced per `modRoomMessagesPage` push; null until requested. */
+  modRoomMessages: {
+    room: string;
+    page: number;
+    hasMore: boolean;
+    messages: ModRoomMessageView[];
+  } | null;
   /** The designated player moderators (admin UI; the `moderators` push).
    * Null until requested. */
   moderators: string[] | null;
@@ -267,6 +333,14 @@ export type Game = {
   /** Request a page of the pending report queue (staff only; →
    * `world.modReports`). */
   requestModReports: (page: number) => void;
+  /** Page further back through the active room's history (chat.md "Message
+   * history"), using the oldest loaded message as the cursor. */
+  loadOlderHistory: (room: string) => void;
+  /** Whether a room has older history left to page back to. */
+  historyHasMore: (room: string) => boolean;
+  /** Browse a page of any room's full message history (staff only; →
+   * `world.modRoomMessages`). */
+  requestModRoomMessages: (room: string, page: number) => void;
   /** Resolve (dismiss) a pending report (staff only). */
   resolveReport: (
     reportId: number,
@@ -333,6 +407,14 @@ export type Game = {
     onSuccess?: (msg?: string) => void;
     onError?: (reason?: string) => void;
   }) => void;
+  /** Force the rankings board to recompute now (an admin command, rankings.md
+   * "Freshness"), off the normal 15-minute wall-clock cadence. Sudoers-gated
+   * server-side like `setMotd` — only surface when `world.isAdmin`. `onSuccess`
+   * fires on the ack, `onError` on a nack. */
+  rebuildRankings: (handlers?: {
+    onSuccess?: (msg?: string) => void;
+    onError?: (reason?: string) => void;
+  }) => void;
   /** Request the global-market goods catalog (answered by `marketGoods`). */
   listMarketGoods: () => void;
   /** Request one good's order book (answered by `marketBook`). */
@@ -352,6 +434,20 @@ export type Game = {
   /** Cancel one of the player's resting orders by id (refunds the escrow);
    * acks with fresh snapshots or nacks (`onError`). */
   cancelOrder: (orderId: number, onError?: (reason?: string) => void) => void;
+  /** Fetch the rankable-metric catalog (stats + skills + knowledge; answered by
+   * `rankingMetrics`). Fixed for a build — the picker filters it client-side. */
+  listRankingMetrics: () => void;
+  /** Request one descending page of a rankings board (answered by
+   * `rankingsPage` into the `world.rankings.boards` wall-clock cache). A cache
+   * hit for the current window is served without a request. */
+  viewRankings: (metric: string, page: number) => void;
+  /** Locate a player on a board by username (answered by `rankingPlayerAt`
+   * into `world.rankings.playerAt`). */
+  findRankingPlayer: (metric: string, username: string) => void;
+  /** The current 15-minute wall-clock rankings bucket (rankings.md), advancing
+   * at each boundary. Depend on it to refresh a board when the server rebuilds;
+   * `world.rankings.boards` is the cache for the active bucket. */
+  rankingsBucket: () => number;
   /** Dismiss the reward view. */
   clearRewards: () => void;
   /** Append a local (client-only) line to the action log. */
@@ -365,6 +461,7 @@ export function GameProvider(props: ParentProps) {
     rooms: [...BUILTIN_ROOMS],
     activeRoom: "main",
     byRoom: Object.fromEntries([...BUILTIN_ROOMS, DM_BUCKET].map((r) => [r, []])),
+    history: {},
   });
 
   const [world, setWorld] = createStore<WorldState>({
@@ -374,6 +471,7 @@ export function GameProvider(props: ParentProps) {
     destinations: {},
     map: null,
     market: null,
+    rankings: { metrics: [], bucket: rankingsBucketOf(Date.now()), boards: {}, playerAt: null },
     inventory: null,
     roster: null,
     formation: null,
@@ -383,6 +481,7 @@ export function GameProvider(props: ParentProps) {
     profile: null,
     modLog: null,
     modReports: null,
+    modRoomMessages: null,
     moderators: null,
     lastRewards: null,
     lastCombat: null,
@@ -392,6 +491,27 @@ export function GameProvider(props: ParentProps) {
 
   const [status, setStatus] = createSignal<GameStatus>("offline");
   const online = () => status() === "connected";
+
+  // The current 15-minute wall-clock rankings bucket, advanced by a timer at
+  // each boundary so a view sitting on a board re-fetches when the server
+  // rebuilds (rankings.md "Freshness"). Reactive — the Rankings page depends on
+  // it to trigger the refresh.
+  const [rankingsBucket, setRankingsBucket] = createSignal(rankingsBucketOf(Date.now()));
+  onMount(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      const now = Date.now();
+      const nextBoundary = (rankingsBucketOf(now) + 1) * RANKINGS_BUCKET_MS;
+      // A small cushion past the boundary so the server's rebuild has landed
+      // before the client re-requests.
+      timer = setTimeout(() => {
+        setRankingsBucket(rankingsBucketOf(Date.now()));
+        schedule();
+      }, nextBoundary - now + 2000);
+    };
+    schedule();
+    onCleanup(() => clearTimeout(timer));
+  });
 
   let nextId = 1;
   let nonce = 1;
@@ -452,6 +572,66 @@ export function GameProvider(props: ParentProps) {
     if (send(data)) recentReads.set(key, now);
   };
 
+  /* ---- chat history (chat.md "Message history") ---- */
+
+  /** Merge a history page into a room's transcript, de-duplicating against
+   * messages already present (live deliveries can race the history fetch) and
+   * keeping the room in message-id order — ids are monotonic with send order,
+   * so sorting by id is chronological; id-less entries (local echoes, system
+   * notices) sort to the newest end. Records the room as loaded and whether
+   * older messages remain. */
+  const mergeRoomHistory = (room: string, msgs: ChatHistoryMessage[], hasMore: boolean) => {
+    ensureRoom(room);
+    setChat("byRoom", room, (existing) => {
+      const seen = new Set(existing.filter((e) => e.messageId != null).map((e) => e.messageId));
+      const additions: ChatEntry[] = msgs
+        .filter((m) => !seen.has(m.messageId))
+        .map((m) => ({
+          id: nextId++,
+          room,
+          from: m.from,
+          body: m.body,
+          at: m.sentAt,
+          kind: "room" as const,
+          messageId: m.messageId,
+        }));
+      if (additions.length === 0) return existing;
+      return [...additions, ...existing].sort((a, b) => {
+        if (a.messageId == null && b.messageId == null) return 0;
+        if (a.messageId == null) return 1;
+        if (b.messageId == null) return -1;
+        return a.messageId - b.messageId;
+      });
+    });
+    setChat("history", room, { hasMore });
+  };
+
+  /** The smallest message id currently loaded in a room — the cursor for
+   * paging further back. Null when the room holds no server messages yet. */
+  const oldestRoomMessageId = (room: string): number | null => {
+    let min: number | null = null;
+    for (const e of chat.byRoom[room] ?? []) {
+      if (e.messageId != null && (min == null || e.messageId < min)) min = e.messageId;
+    }
+    return min;
+  };
+
+  /** Request a room's history. `before` (a message id) pages further back; its
+   * absence fetches the latest page. The initial fetch is throttled and yields
+   * once the room is loaded (a reconnect clears the throttle, so it re-fetches
+   * the active room); a load-older request is user-initiated and always sent.
+   * The DM bucket has no room history. */
+  const requestRoomHistory = (room: string, before?: number) => {
+    if (!online() || room === DM_BUCKET) return;
+    if (before != null) {
+      send({ t: "chat", ct: "roomHistory", room, before });
+      return;
+    }
+    untrack(() =>
+      sendRead(`roomHistory:${room}`, { t: "chat", ct: "roomHistory", room }, () => !!chat.history[room]),
+    );
+  };
+
   /* ---- inbound handling ---- */
   const onMessage = (msg: ServerMessage) => {
     switch (msg.t) {
@@ -466,6 +646,11 @@ export function GameProvider(props: ParentProps) {
         if (chat.activeRoom !== DM_BUCKET && !names.includes(chat.activeRoom)) {
           setChat("activeRoom", names.includes("main") ? "main" : (names[0] ?? "main"));
         }
+        // Prepopulate the room the player is currently viewing with its recent
+        // history (chat.md "Message history"); other rooms load when opened.
+        // The throttle was cleared on disconnect, so this re-fetches on every
+        // (re)connect even if the room was loaded in a prior session.
+        if (chat.activeRoom !== DM_BUCKET) requestRoomHistory(chat.activeRoom);
         break;
       }
       case "chatRoomMsg":
@@ -501,10 +686,39 @@ export function GameProvider(props: ParentProps) {
             );
           }
         }
+        // The moderation room-message browser keeps revoked messages visible
+        // (flagged), so flip the flag in place rather than dropping the row —
+        // this reflects a revoke issued from the browser itself with no refetch.
+        if (world.modRoomMessages?.messages.some((m) => m.messageId === msg.messageId)) {
+          setWorld(
+            "modRoomMessages",
+            "messages",
+            (m) => m.messageId === msg.messageId,
+            "revoked",
+            true,
+          );
+        }
         break;
       }
       case "chatProfile":
-        setWorld("profile", { username: msg.username ?? null, online: msg.online });
+        setWorld("profile", {
+          username: msg.username ?? null,
+          online: msg.online,
+          accountId: msg.accountId ?? null,
+        });
+        break;
+      case "chatRoomHistory":
+        // Recent backlog for a room (chat.md "Message history"): merge it into
+        // the transcript, de-duped and ordered.
+        mergeRoomHistory(msg.room, msg.messages, msg.hasMore);
+        break;
+      case "modRoomMessagesPage":
+        setWorld("modRoomMessages", {
+          room: msg.room,
+          page: msg.page,
+          hasMore: msg.hasMore,
+          messages: msg.messages,
+        });
         break;
       case "modLogPage":
         setWorld("modLog", { page: msg.page, hasMore: msg.hasMore, entries: msg.entries });
@@ -595,6 +809,32 @@ export function GameProvider(props: ParentProps) {
           book: m?.book ?? null,
           myOrders: msg.orders,
         }));
+        break;
+      case "rankingMetrics":
+        // The metric catalog (fixed for a build): the picker filters it locally.
+        setWorld("rankings", "metrics", msg.metrics);
+        break;
+      case "rankingsPage":
+        // Cache the board page for this wall-clock window, keyed by metric+page
+        // (the server's rebuild cadence makes it valid until the bucket rolls).
+        setWorld("rankings", "boards", `${msg.metric}:${msg.page}`, {
+          metric: msg.metric,
+          metricName: msg.metricName,
+          page: msg.page,
+          total: msg.total,
+          hasMore: msg.hasMore,
+          rows: msg.rows,
+        });
+        break;
+      case "rankingPlayerAt":
+        setWorld("rankings", "playerAt", {
+          metric: msg.metric,
+          username: msg.username,
+          found: msg.found,
+          rank: msg.rank ?? null,
+          page: msg.page ?? null,
+          value: msg.value ?? null,
+        });
         break;
       case "effects":
         // Authoritative snapshot: replace the active-effect set.
@@ -940,6 +1180,19 @@ export function GameProvider(props: ParentProps) {
       handlers,
     );
 
+  // Sudoers-gated server-side like setMotd; only surfaced to world.isAdmin.
+  // The server acks once the rebuild is queued (the manager re-resolves the
+  // eligible set and recomputes the board off-cadence, fire-and-forget).
+  const rebuildRankings = (handlers?: {
+    onSuccess?: (msg?: string) => void;
+    onError?: (reason?: string) => void;
+  }) =>
+    sendOp(
+      { t: "adminCmd", tt: "rebuildRankings" },
+      "offline — admin commands need a server connection",
+      handlers,
+    );
+
   /** Ask the server for a full state refresh (top-level control message,
    * rate-limited per connection). The server fans it to both subsystems: chat
    * re-pushes `chatState`, the game re-pushes `gameState` + `inventory` +
@@ -948,7 +1201,38 @@ export function GameProvider(props: ParentProps) {
     if (online()) send({ t: "requestState" });
   };
 
-  const setActiveRoom = (room: string) => setChat("activeRoom", room);
+  const setActiveRoom = (room: string) => {
+    setChat("activeRoom", room);
+    // Opening a room loads its backlog the first time (chat.md "Message
+    // history"); the throttle makes a repeat open a no-op once loaded.
+    if (room !== DM_BUCKET) requestRoomHistory(room);
+  };
+
+  /** Page further back through a room's history (chat.md "Message history"),
+   * using the oldest loaded message as the cursor. A no-op when there's nothing
+   * older or the room holds no server messages yet. */
+  const loadOlderHistory = (room: string) => {
+    const before = oldestRoomMessageId(room);
+    if (before != null) requestRoomHistory(room, before);
+  };
+
+  /** Whether a room has older history to page back to (chat.md "Message
+   * history") — drives the "load older" affordance. */
+  const historyHasMore = (room: string): boolean => !!chat.history[room]?.hasMore;
+
+  /** Browse a page of any room's full message history (staff only; chat.md
+   * "Logging" — the moderation view). Answered into `world.modRoomMessages`. */
+  const requestModRoomMessages = (room: string, page: number) => {
+    if (!online() || !room) return;
+    const p = Math.max(0, Math.floor(page));
+    untrack(() =>
+      sendRead(
+        `modRoomMessages:${room}:${p}`,
+        { t: "chat", ct: "modRoomMessages", room, page: p },
+        () => world.modRoomMessages?.room === room && world.modRoomMessages?.page === p,
+      ),
+    );
+  };
 
   /* ---- game / idle-action methods ---- */
 
@@ -1145,6 +1429,68 @@ export function GameProvider(props: ParentProps) {
     send({ t: "game", gt: "cancelOrder", orderId }, { onNack: onError });
   };
 
+  /* ---- rankings (rankings.md) ---- */
+
+  // The boards are a 15-minute wall-clock cache, matching the server's rebuild
+  // cadence: when the window rolls, drop the cached boards + the player lookup
+  // so the next request fetches the freshly rebuilt board. Returns the current
+  // bucket so the caller can key its request by window.
+  const rollRankingsBucket = (): number => {
+    const bucket = rankingsBucketOf(Date.now());
+    untrack(() => {
+      if (world.rankings.bucket !== bucket) {
+        setWorld("rankings", "bucket", bucket);
+        setWorld("rankings", "boards", {});
+        setWorld("rankings", "playerAt", null);
+      }
+    });
+    return bucket;
+  };
+
+  const listRankingMetrics = () => {
+    if (!online()) return;
+    // The catalog is fixed for a build (like the market goods): fetch it once
+    // (the empty-query full set) and let the picker filter it client-side.
+    untrack(() =>
+      sendRead(
+        "rankingMetrics",
+        { t: "game", gt: "searchRankingMetrics", query: "" },
+        () => world.rankings.metrics.length > 0,
+      ),
+    );
+  };
+
+  const viewRankings = (metric: string, page: number) => {
+    if (!online()) return;
+    const p = Math.max(0, Math.floor(page));
+    const bucket = rollRankingsBucket();
+    // Served straight from the cache for the rest of this wall-clock window —
+    // re-visiting a (metric, page) already seen this window is instant, no
+    // request. Only a cache miss (new page, or a rolled window) hits the wire.
+    if (untrack(() => world.rankings.boards[`${metric}:${p}`])) return;
+    untrack(() =>
+      sendRead(`rankings:${bucket}:${metric}:${p}`, { t: "game", gt: "viewRankings", metric, page: p }),
+    );
+  };
+
+  const findRankingPlayer = (metric: string, username: string) => {
+    if (!online()) return;
+    const u = username.trim();
+    if (!u) return;
+    const bucket = rollRankingsBucket();
+    // The answer slot holds one (metric, username) for the window; the key is
+    // bucketed so a new window re-looks-up against the rebuilt board.
+    untrack(() =>
+      sendRead(
+        `findRankingPlayer:${bucket}:${metric}:${u.toLowerCase()}`,
+        { t: "game", gt: "findRankingPlayer", metric, username: u },
+        () =>
+          world.rankings.playerAt?.metric === metric &&
+          world.rankings.playerAt?.username.toLowerCase() === u.toLowerCase(),
+      ),
+    );
+  };
+
   const clearRewards = () => setWorld("lastRewards", null);
 
   const logLocal = (text: string) => pushLog(text, "local");
@@ -1232,6 +1578,9 @@ export function GameProvider(props: ParentProps) {
     requestProfile,
     requestModLog,
     requestModReports,
+    loadOlderHistory,
+    historyHasMore,
+    requestModRoomMessages,
     resolveReport,
     setModerator,
     listModerators,
@@ -1251,6 +1600,7 @@ export function GameProvider(props: ParentProps) {
     setFormation,
     setMotd,
     reloadContent,
+    rebuildRankings,
     listMarketGoods,
     viewMarket,
     listMyOrders,
@@ -1258,6 +1608,10 @@ export function GameProvider(props: ParentProps) {
     placeSellOrder,
     buyDirect,
     cancelOrder,
+    listRankingMetrics,
+    viewRankings,
+    findRankingPlayer,
+    rankingsBucket,
     clearRewards,
     logLocal,
   };

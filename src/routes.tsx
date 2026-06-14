@@ -12,11 +12,8 @@ import { Privacy } from "./pages/Privacy";
 import { Admin } from "./pages/game/Admin";
 import { Moderator } from "./pages/game/Moderator";
 import { Profile } from "./pages/game/Profile";
-import {
-  Rankings,
-  TimeTracker,
-  ResourceEditor,
-} from "./pages/game/placeholders";
+import { Rankings } from "./pages/game/Rankings";
+import { TimeTracker, ResourceEditor } from "./pages/game/placeholders";
 
 // The single route table. To add a route: create a page under src/pages/game/,
 // register it here, and (if it belongs in the nav) add it to Sidebar.tsx.

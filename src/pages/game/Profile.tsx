@@ -72,6 +72,13 @@ export function Profile() {
                     />
                     {p().online ? "Online" : "Offline"}
                   </div>
+                  {/* The account id shows only where the server sends it (chat.md
+                      "Player profiles"): your own always, anyone's when staff. */}
+                  <Show when={p().accountId != null}>
+                    <div class="text-xs text-base-content/45 font-mono mt-0.5">
+                      Account #{p().accountId}
+                    </div>
+                  </Show>
                 </div>
               </div>
             )}

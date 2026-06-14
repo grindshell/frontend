@@ -87,9 +87,16 @@ export type ChatData =
   | { ct: "modReports"; page: number }
   // Resolve (dismiss) a pending report (moderators/admins only).
   | { ct: "resolveReport"; reportId: number }
-  // A player's minimal profile (username + online); omitted username = own.
-  // Answered with a `chatProfile` push.
-  | { ct: "profile"; username?: string | null };
+  // A player's minimal profile (username + online + account id where visible);
+  // omitted username = own. Answered with a `chatProfile` push.
+  | { ct: "profile"; username?: string | null }
+  // One page of a room's recent message history (chat.md "Message history").
+  // `before` is an exclusive message-id cursor: omitted/null = the latest page,
+  // an id pages further back. Answered with a `chatRoomHistory` push.
+  | { ct: "roomHistory"; room: string; before?: number | null }
+  // Browse a page of any room's full message history (moderators/admins only —
+  // the moderation view). Newest-first, includes revoked. → `modRoomMessagesPage`.
+  | { ct: "modRoomMessages"; room: string; page: number };
 
 // Game-subsystem payloads. Tagged on `gt` (camelCase). Mirrors `GameData`
 // (+ the flattened `ActionRequest` under `kind` for `changeAction`).
@@ -171,7 +178,18 @@ export type GameData =
   | { gt: "buyDirect"; good: string; qty: number; maxPrice: number }
   // Cancel one of the player's resting orders by id: refunds the escrow (but
   // not the listing fee). Nacks when the order is missing or not the player's.
-  | { gt: "cancelOrder"; orderId: number };
+  | { gt: "cancelOrder"; orderId: number }
+  // Search the rankable metrics by name (rankings.md "Selecting a metric") —
+  // the six stats, the skills, and the knowledge entries. An empty query
+  // returns the (capped) full catalog. Answered with a `rankingMetrics` push.
+  | { gt: "searchRankingMetrics"; query: string }
+  // Request one descending page of a rankings board for `metric` (a metric
+  // `key` from a `rankingMetrics` entry; `page` is 0-based). Answered with a
+  // `rankingsPage` push.
+  | { gt: "viewRankings"; metric: string; page: number }
+  // Locate a player on `metric`'s board by username (rankings.md "Player search
+  // within a board"). Answered with a `rankingPlayerAt` push.
+  | { gt: "findRankingPlayer"; metric: string; username: string };
 
 // Top-level inbound data, tagged on `t`. Chat ops are carried under `t: "chat"`
 // and game ops under `t: "game"`. `requestState` is a top-level *control*
@@ -195,6 +213,9 @@ export type ClientData =
   // "Hot reload"). Acked once queued; each reload leaks the superseded catalog
   // generation by design, so the admin UI warns before issuing it.
   | { t: "adminCmd"; tt: "reloadContent" }
+  // Force the rankings board to recompute now (rankings.md "Freshness"), off the
+  // normal 15-minute wall-clock cadence. Acked once the rebuild is queued.
+  | { t: "adminCmd"; tt: "rebuildRankings" }
   | { t: "requestState" };
 
 /** The full client → server envelope (`Message`). `nonce` correlates Ack/Nack. */
@@ -499,6 +520,29 @@ export type OrderView = {
   qty: number;
 };
 
+/** One selectable ranking metric (`RankMetricView`, rankings.md "Selecting a
+ * metric"): a stat, skill, or knowledge entry. `key` is the opaque id echoed
+ * back in `viewRankings` (`stat:str`, `skill:pathfinding`, `know:zone:1,0,0`);
+ * `kind` is `"stat"`, `"skill"`, or `"knowledge"`; `name` is its display label. */
+export type RankMetricView = {
+  key: string;
+  kind: string;
+  name: string;
+};
+
+/** One row of a rankings board (`RankRow`, rankings.md "Reading the board").
+ * Stat/skill rows carry the ranked `unitId`/`unitName` (per-unit subject);
+ * knowledge rows omit them (per-account subject). `value` is the trained level
+ * (stat/skill) or the raw familiarity integer (knowledge). */
+export type RankRow = {
+  rank: number;
+  accountId: number;
+  username: string;
+  unitId?: string;
+  unitName?: string;
+  value: number;
+};
+
 /** One entry of the enforcement log (`ModLogEntryView`, chat.md "Logging"),
  * actors resolved to usernames server-side (`#<id>` for nameless accounts). */
 export type ModLogEntryView = {
@@ -536,6 +580,28 @@ export type ReportView = {
   revoked: boolean;
 };
 
+/** One message in a room's history page as a normal reader sees it
+ * (`ChatHistoryMessage`, chat.md "Message history"): revoked messages are
+ * already filtered out server-side; `from` is the sender's resolved username. */
+export type ChatHistoryMessage = {
+  messageId: number;
+  from: string;
+  body: string;
+  sentAt: string;
+};
+
+/** One message in the moderation view's room-history browser
+ * (`ModRoomMessageView`, chat.md "Logging"): like a history message but for
+ * staff — it carries the `revoked` flag, since the browser shows revoked
+ * messages (a normal reader's history omits them). */
+export type ModRoomMessageView = {
+  messageId: number;
+  sender: string;
+  body: string;
+  sentAt: string;
+  revoked: boolean;
+};
+
 // Tagged on `t` (camelCase). Mirrors `Outbound`. `from` is the sender's
 // USERNAME; `sentAt` is an RFC3339 / ISO-8601 timestamp string. `messageId` is
 // a backend i64 (safe as a JS number for any realistic message count).
@@ -555,8 +621,16 @@ export type ServerMessage =
   // Broadcast to every connected client; ignore ids never seen.
   | { t: "chatRevoke"; messageId: number }
   // The answer to a `profile` request: the username (absent for the
-  // requester's own guest account) and whether the player is connected.
-  | { t: "chatProfile"; username?: string | null; online: boolean }
+  // requester's own guest account), whether the player is connected, and the
+  // account id — present only where the requester may see it (their own
+  // always, anyone's when staff), omitted otherwise.
+  | { t: "chatProfile"; username?: string | null; online: boolean; accountId?: number | null }
+  // One page of a room's recent history (chat.md "Message history"), newest
+  // first. `hasMore` says whether older messages exist before the oldest here
+  // (page back with that message's id as the `before` cursor).
+  | { t: "chatRoomHistory"; room: string; hasMore: boolean; messages: ChatHistoryMessage[] }
+  // One page of a room's full history for the moderation view, newest first.
+  | { t: "modRoomMessagesPage"; room: string; page: number; hasMore: boolean; messages: ModRoomMessageView[] }
   // One page of the enforcement log, newest first (the moderation view).
   | { t: "modLogPage"; page: number; hasMore: boolean; entries: ModLogEntryView[] }
   // One page of the pending report queue, newest first.
@@ -664,7 +738,34 @@ export type ServerMessage =
   | { t: "marketBook"; good: string; bids: OrderLevel[]; asks: OrderLevel[]; yours: OrderView[] }
   // The answer to `listMyOrders`: every active order the player holds, across
   // all goods. The client replaces its order list from this.
-  | { t: "marketOrders"; orders: OrderView[] };
+  | { t: "marketOrders"; orders: OrderView[] }
+  // The answer to `searchRankingMetrics`: the metrics matching the search, for
+  // the client's metric picker (rankings.md "Selecting a metric").
+  | { t: "rankingMetrics"; metrics: RankMetricView[] }
+  // One descending page of a rankings board (rankings.md "Reading the board"):
+  // ten rows by default. `metricName` is the board header label, `total` the
+  // eligible subject count, `hasMore` whether a next page exists.
+  | {
+      t: "rankingsPage";
+      metric: string;
+      metricName: string;
+      page: number;
+      total: number;
+      hasMore: boolean;
+      rows: RankRow[];
+    }
+  // The answer to `findRankingPlayer`: where a searched player sits on a board.
+  // `found` is false when the player is not ranked here (ineligible or no value
+  // for the metric).
+  | {
+      t: "rankingPlayerAt";
+      metric: string;
+      username: string;
+      found: boolean;
+      rank?: number | null;
+      page?: number | null;
+      value?: number | null;
+    };
 
 /**
  * Parse a raw WebSocket text frame into typed `ServerMessage`s.

@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal } from "solid-js";
 import { useGame } from "../../lib/game-context";
-import type { ModLogEntryView, ReportView } from "../../lib/protocol";
+import type { ModLogEntryView, ModRoomMessageView, ReportView } from "../../lib/protocol";
 
 /**
  * The moderation view (chat.md "Logging" / "Reporting"): the pending report
@@ -24,9 +24,27 @@ export function Moderator() {
 
   const reports = () => game.world.modReports;
   const log = () => game.world.modLog;
+  const browse = () => game.world.modRoomMessages;
 
   const refreshReports = () => game.requestModReports(reports()?.page ?? 0);
   const fail = (r?: string) => setNote({ ok: false, text: r ?? "action failed" });
+
+  // The room-message browser (chat.md "Logging"): page through any room's full
+  // history, including revoked messages (flagged).
+  const [roomQuery, setRoomQuery] = createSignal("");
+  const browseRoom = (page = 0) => {
+    const r = roomQuery().trim();
+    if (r) game.requestModRoomMessages(r, page);
+  };
+  // Revoking from the browser: the server's chatRevoke broadcast flips the
+  // message's flag in place (no refetch needed).
+  const revokeBrowsed = (m: ModRoomMessageView) => {
+    setNote(undefined);
+    game.revokeMessage(m.messageId, {
+      onSuccess: () => setNote({ ok: true, text: `message ${m.messageId} revoked` }),
+      onError: fail,
+    });
+  };
 
   const dismiss = (report: ReportView) => {
     setNote(undefined);
@@ -163,6 +181,91 @@ export function Moderator() {
                   )}
                 </For>
               </ul>
+            </Show>
+          </div>
+
+          {/* Browse any room's full message history (chat.md "Logging"). */}
+          <div class="p-3 border border-base-300 rounded-xl bg-base-200">
+            <div class="flex items-center gap-3 mb-2 flex-wrap">
+              <h2 class="font-mono text-sm uppercase tracking-wider text-base-content/55">
+                Room messages
+              </h2>
+              <form
+                class="flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  browseRoom(0);
+                }}
+              >
+                <input
+                  type="text"
+                  class="input input-xs w-40"
+                  placeholder="room name"
+                  value={roomQuery()}
+                  onInput={(e) => setRoomQuery(e.currentTarget.value)}
+                />
+                <button type="submit" class="btn btn-xs" disabled={!roomQuery().trim()}>
+                  Browse
+                </button>
+              </form>
+              <Show when={browse()}>
+                {(b) => (
+                  <Pager
+                    page={b().page}
+                    hasMore={b().hasMore}
+                    go={(p) => game.requestModRoomMessages(b().room, p)}
+                  />
+                )}
+              </Show>
+            </div>
+            <Show
+              when={browse()}
+              fallback={
+                <div class="text-sm text-base-content/40">
+                  Enter a room name to browse its messages, including revoked ones.
+                </div>
+              }
+            >
+              {(b) => (
+                <Show
+                  when={b().messages.length > 0}
+                  fallback={<div class="text-sm text-base-content/40">No messages in #{b().room}.</div>}
+                >
+                  <div class="text-xs text-base-content/45 mb-1">#{b().room}</div>
+                  <ul class="space-y-1">
+                    <For each={b().messages}>
+                      {(m) => (
+                        <li class="p-1.5 rounded bg-base-100 border border-base-300/60 text-sm flex items-baseline gap-2">
+                          <span class="text-base-content/40 text-xs whitespace-nowrap">
+                            {when(m.sentAt)}
+                          </span>
+                          <span class="font-mono text-[13px] min-w-0">
+                            <span class={m.revoked ? "text-base-content/40 line-through" : "text-primary"}>
+                              {m.sender}:
+                            </span>{" "}
+                            <span class={m.revoked ? "text-base-content/40 line-through" : ""}>{m.body}</span>
+                          </span>
+                          <Show
+                            when={!m.revoked}
+                            fallback={
+                              <span class="badge badge-xs badge-error badge-outline ml-auto shrink-0">
+                                revoked
+                              </span>
+                            }
+                          >
+                            <button
+                              class="btn btn-xs btn-error btn-outline ml-auto shrink-0"
+                              onClick={() => revokeBrowsed(m)}
+                            >
+                              Revoke
+                            </button>
+                          </Show>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </Show>
+              )}
             </Show>
           </div>
 

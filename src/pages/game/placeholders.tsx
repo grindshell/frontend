@@ -13,14 +13,6 @@ export const GlobalMarket = () => (
   />
 );
 
-export const Rankings = () => (
-  <PagePlaceholder
-    title="Rankings"
-    icon="NumberedList"
-    blurb="Server leaderboards. Waiting on the rankings endpoint."
-  />
-);
-
 export const TimeTracker = () => (
   <PagePlaceholder
     title="Time Tracker"

@@ -20,6 +20,8 @@ export function Admin() {
   const [confirmReload, setConfirmReload] = createSignal(false);
   const [reloadBusy, setReloadBusy] = createSignal(false);
   const [reloadResult, setReloadResult] = createSignal<{ ok: boolean; text: string }>();
+  const [rankBusy, setRankBusy] = createSignal(false);
+  const [rankResult, setRankResult] = createSignal<{ ok: boolean; text: string }>();
 
   // Load the moderator listing once connected as an admin (chat.md
   // "Moderator designation").
@@ -64,6 +66,23 @@ export function Admin() {
         setReloadBusy(false);
         setConfirmReload(false);
         setReloadResult({ ok: false, text: reason ?? "Failed to request reload." });
+      },
+    });
+  };
+
+  // Force the rankings board to recompute now (rankings.md "Freshness"), off the
+  // normal 15-minute cadence. Cheap and idempotent, so no confirm step.
+  const doRebuildRankings = () => {
+    setRankBusy(true);
+    setRankResult(undefined);
+    game.rebuildRankings({
+      onSuccess: (msg) => {
+        setRankBusy(false);
+        setRankResult({ ok: true, text: msg ?? "Rankings rebuild requested." });
+      },
+      onError: (reason) => {
+        setRankBusy(false);
+        setRankResult({ ok: false, text: reason ?? "Failed to request rebuild." });
       },
     });
   };
@@ -217,7 +236,7 @@ export function Admin() {
         <div class="p-3 border border-base-300 rounded-xl bg-base-200 max-w-2xl">
           <fieldset class="fieldset">
             <legend class="fieldset-legend">Content</legend>
-            <p class="label text-base-content/45">
+            <p class="label whitespace-normal text-base-content/45">
               Re-read the authored content catalogs (enemies, zones, items, drop tables) from
               disk without restarting the server. Runs as root and is logged; applied at the next
               tick boundary.
@@ -225,9 +244,9 @@ export function Admin() {
             <Show
               when={confirmReload()}
               fallback={
-                <div class="flex items-center gap-3 mt-2">
+                <div class="flex flex-wrap items-center gap-3 mt-2">
                   <button
-                    class="btn btn-sm btn-warning"
+                    class="btn btn-sm btn-warning whitespace-normal h-auto"
                     disabled={reloadBusy() || !game.online()}
                     onClick={() => {
                       setReloadResult(undefined);
@@ -273,6 +292,41 @@ export function Admin() {
                 </button>
               </div>
             </Show>
+          </fieldset>
+        </div>
+
+        {/* Force a rankings recompute (rankings.md "Freshness"). The board is a
+            wall-clock cache rebuilt every 15 minutes; this triggers a rebuild
+            now without waiting for the next boundary. */}
+        <div class="p-3 border border-base-300 rounded-xl bg-base-200 max-w-2xl">
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Rankings</legend>
+            <p class="label whitespace-normal text-base-content/45">
+              The rankings board is a wall-clock cache rebuilt every 15 minutes (:00/:15/:30/:45).
+              Force a recompute now without waiting for the next boundary. Runs as root and is
+              logged.
+            </p>
+            <div class="flex flex-wrap items-center gap-3 mt-2">
+              <button
+                class="btn btn-sm btn-primary whitespace-normal h-auto"
+                disabled={rankBusy() || !game.online()}
+                onClick={doRebuildRankings}
+              >
+                <Show when={rankBusy()} fallback="Rebuild rankings">
+                  <span class="loading loading-spinner loading-xs" />
+                </Show>
+              </button>
+              <Show when={!game.online()}>
+                <span class="text-xs text-base-content/45">Offline — connect to a server.</span>
+              </Show>
+              <Show when={rankResult()}>
+                {(r) => (
+                  <span class={"text-sm " + (r().ok ? "text-success" : "text-error")}>
+                    {r().text}
+                  </span>
+                )}
+              </Show>
+            </div>
           </fieldset>
         </div>
       </Show>
