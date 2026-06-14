@@ -77,7 +77,7 @@ src/
     GdprConsent.tsx   one-time "stores data locally" notice
   pages/
     LoginRegister.tsx the auth gate (login / register / forgot) — see §6
-    game/             one component per route (Actions, Area, Formation, …) — see §4
+    game/             one component per route (Actions, Zone, Map, Formation, …) — see §4
       overview/
         Overview.tsx  the "/" dashboard: 12-col grid of moveable/resizeable cards
         cards.tsx     card shell registry + per-card bodies (tiered by area)
@@ -108,8 +108,9 @@ dist/                 Vite build output (gitignored)
   `useLocation` from `@solidjs/router`. There is no per-component "current route" signal —
   the URL is the source of truth.
 - **Routes** (ported from `frontend-old/src/routes.ts`, plus `/inventory`):
-  `/` Overview · `/actions` · `/area` · `/formation` · `/inventory` · `/global-market` ·
+  `/` Overview · `/actions` · `/zone` · `/map` · `/formation` · `/inventory` · `/global-market` ·
   `/profile` · `/rankings` · `/time-tracker` · `/resource-editor` · `/about` · `/settings`.
+  (`/map` is the renamed former `/area`; `/zone` is the active-combat surface.)
 - **Page fidelity**: pages backed by live server state render it for real — Actions
   (idle combat + travel), Inventory (holdings/gear/effects), Formation (the roster, the
   two-column [unit detail inspector](src/pages/game/UnitDetail.tsx) — prev/next roster paging,
@@ -120,8 +121,11 @@ dist/                 Vite build output (gitignored)
   invented flavor; click a skill for the lower info view) / Gear (stacked equipped/inventory
   with drag-to-equip/unequip over the real ops) / Metadata (placeholder, wire doesn't serve
   it) into the right column — and the live 5x5 grid editor over the `formation`
-  snapshot — on the shared `CellGrid`/Gridstack grid, drag to move/swap), Area (the zone map:
+  snapshot — on the shared `CellGrid`/Gridstack grid, drag to move/swap), Map (the zone map:
   the discovered/frontier gridmap over that same shared grid, with clickable adjacent travel),
+  Zone (the in-zone active-combat surface: co-present players, an activity log with a MUD-style
+  input, and the available boss fights to rouse — or the current turn-based fight, with a shared
+  boss HP bar, the party roster, and Attack/Leave; combat.md "Active combat"),
   [Market](src/pages/game/Market.tsx) (the live global market — a goods picker over the
   tradeable-goods catalog with per-good balances, the order-book depth, a buy/sell form with a
   live total + listing-fee preview, buy-direct, and the player's own orders with cancel; the
@@ -166,7 +170,7 @@ the client's visual language.
     x/y/z position, danger, and the player's banked **Knowledge** (`MapZoneInfo.knowledge`,
     knowledge.md) — plus a **Travel** button when the selected tile is an adjacent destination
     (`startTravel`). The **large** tier also adds Z up/down + **Recenter** controls (mirrors the
-    Area page). Requests `listMap` + `listDestinations`. micro = text fallback; offline → empty.
+    Map page). Requests `listMap` + `listDestinations`. micro = text fallback; offline → empty.
   - **Activity Log** — auto-scrolls to the newest line (`world.log` tail) and, at medium/large,
     carries the same MUD interaction input the Actions-page log has (`logLocal`; zone
     interactions aren't served yet, so it echoes locally).
@@ -261,7 +265,7 @@ serves **today**:
 - **Zone map** (zones-and-travel.md "Map visibility"): the `listMap` request is answered with a
   `mapView` push — the player's `current` zone plus every visible zone (the discovered region and
   its one-step frontier), each flagged `discovered`. The client replaces `world.map` wholesale; the
-  [Area page](src/pages/game/Area.tsx) renders it on the shared `CellGrid` (Gridstack — the same
+  [Map page](src/pages/game/Map.tsx) renders it on the shared `CellGrid` (Gridstack — the same
   component the editor's tile map uses, now the **`@grindshell/ui-components`** package consumed via
   pnpm `link:`, [../ui-components/CLAUDE.md](../ui-components/CLAUDE.md); edit it there, not here) one
   X/Y plane at a time with a Z toggle. Clicking a zone **only selects** it — the selected zone's
@@ -274,10 +278,22 @@ serves **today**:
   buttons (the selected-zone card or the destination list), reusing `changeAction:travel`.
   Frontier zones carry the same name + danger the travel destination picker exposes.
 
+- **Active combat** (combat.md "Active combat", served today — MVP): the in-zone, turn-based,
+  joinable boss loop the [Zone page](src/pages/game/Zone.tsx) drives. Reads: `listZonePlayers` →
+  `zonePlayers` (co-presence), `listZoneCombat` → `combatList` (open lobbies), `listZoneBosses` →
+  `zoneBosses` (the bosses a host can rouse + their general-resource entry cost). Mutations:
+  `openCombat` (pay the entry cost, host an instance), `joinCombat`, `combatAttack` (one Attack
+  turn, rate-limited 1s server-side), `leaveCombat`. Pushes: `combatState` (the authoritative
+  instance snapshot — shared boss + roster + your pool/contribution, held in `world.combat`),
+  `combatEvent` (narration into `world.log`), `combatClosed` (`defeated`/`wiped`/`left`, clears
+  `world.combat`). MVP scope: **Attack/Leave only** (skills/items/Defend deferred), single boss
+  phase, instances in-memory server-side (not persisted across restart). Live multi-client E2E
+  is still TODO.
+
 **Not present on the wire** (so not modeled here): zone/world consumable
-scopes, harvesting/crafting actions, profile/rankings. When those land, add their message
-variants to `protocol.ts` and grow the context; until then those pages stay on local placeholder
-data.
+scopes, harvesting/crafting actions, profile/rankings, in-fight skills/items. When those land,
+add their message variants to `protocol.ts` and grow the context; until then those pages stay on
+local placeholder data.
 
 **Global market** (markets.md, served today): `listMarketGoods`/`viewMarket`/`listMyOrders` reads
 and `placeBuyOrder`/`placeSellOrder`/`buyDirect`/`cancelOrder` mutations, answered by
@@ -320,9 +336,10 @@ Config + endpoints: [config.ts](src/lib/config.ts) / `.env.example`.
   mirror the backend's real serde definitions: auth, chat, the idle-combat action lifecycle
   (`gameState`/`actionTick`/`actionRewards`/enemy listings), inventory, roster/gear (incl. the
   resolved-skill build inspector on `UnitView`), consumables/effects, formation editing, and the
-  global market (`marketGoods`/`marketBook`/`marketOrders`) — the backend serves all of these
-  today. Anything the backend doesn't yet serve (local markets, multiplayer/boss combat,
-  per-unit combat-stat
+  global market (`marketGoods`/`marketBook`/`marketOrders`), and the active-combat MVP
+  (`zonePlayers`/`combatList`/`zoneBosses`/`combatState`/`combatEvent`/`combatClosed`) — the
+  backend serves all of these today. Anything the backend doesn't yet serve (local markets,
+  in-fight skills/items, per-unit combat-stat
   *projection* of an idle formation) is **not** modeled — when a page needs that data, surface
   the need rather than hardcoding a fake shape. The canonical data model is decided in
   `knowledge-base/` and implemented server-side first; grow the data layer to match the

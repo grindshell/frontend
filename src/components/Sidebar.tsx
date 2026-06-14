@@ -8,7 +8,8 @@ export type Route = { id: string; name: string; icon: IconName };
 const ROUTES: Route[] = [
   { id: "/", name: "Overview", icon: "ViewfinderCircle" },
   { id: "/actions", name: "Actions", icon: "Battery50" },
-  { id: "/area", name: "Area", icon: "MapPin" },
+  { id: "/zone", name: "Zone", icon: "ShieldCheck" },
+  { id: "/map", name: "Map", icon: "MapPin" },
   { id: "/formation", name: "Formation", icon: "Users" },
   { id: "/inventory", name: "Inventory", icon: "CircleStack" },
   { id: "/global-market", name: "Global Market", icon: "Scale" },

@@ -1096,7 +1096,7 @@ function LogCard(props: { span: Span; }) {
 /* ---------- the registry the Overview grid renders ---------- */
 export const CARDS: CardDef[] = [
   { id: "action", title: "Current Action", route: "/actions", defSpan: { col: 4, row: 2 }, Body: ActionCard },
-  { id: "map", title: "Map", route: "/area", defSpan: { col: 4, row: 2 }, Body: MapCard },
+  { id: "map", title: "Map", route: "/map", defSpan: { col: 4, row: 2 }, Body: MapCard },
   { id: "inventory", title: "Inventory", route: "/inventory", defSpan: { col: 4, row: 4 }, Body: InventoryCard },
   {
     id: "buy",

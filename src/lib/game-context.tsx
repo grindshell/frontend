@@ -17,6 +17,7 @@
 
 import {
   createContext,
+  createEffect,
   createSignal,
   onCleanup,
   onMount,
@@ -30,8 +31,11 @@ import { config } from "./config";
 import { Connection, type ConnStatus } from "./connection";
 import type {
   ActionView,
+  BossOptionView,
   ChatHistoryMessage,
   ClientData,
+  CombatLobbyView,
+  CombatState,
   CombatView,
   CurrenciesView,
   DestinationInfo,
@@ -54,6 +58,7 @@ import type {
   RewardsView,
   ServerMessage,
   UnitView,
+  ZonePlayerView,
 } from "./protocol";
 
 /** Canonical built-in rooms (knowledge-base/design/chat.md "Built-in rooms"). */
@@ -89,7 +94,7 @@ type ChatState = {
   /** Per-room history load state (chat.md "Message history"): an entry exists
    * once the room's backlog has been fetched, and `hasMore` says whether older
    * messages remain to page back to. The DM bucket is never tracked here. */
-  history: Record<string, { hasMore: boolean }>;
+  history: Record<string, { hasMore: boolean; }>;
 };
 
 /** One line of the action log (the Actions screen's right-hand column). */
@@ -139,7 +144,7 @@ export type InventoryState = {
  * player's own active orders (replaced per `marketOrders` push). */
 export type MarketState = {
   goods: GoodInfo[];
-  book: { good: string; bids: OrderLevel[]; asks: OrderLevel[]; yours: OrderView[] } | null;
+  book: { good: string; bids: OrderLevel[]; asks: OrderLevel[]; yours: OrderView[]; } | null;
   myOrders: OrderView[];
 };
 
@@ -231,7 +236,7 @@ type WorldState = {
    * their one-step frontier (zones-and-travel.md "Map visibility"),
    * authoritative and replaced wholesale. `current` is the zone the player
    * stands in. Null until the first push (offline mode). */
-  map: { current: string; zones: MapZoneInfo[] } | null;
+  map: { current: string; zones: MapZoneInfo[]; } | null;
   /** The global market (markets.md): the tradeable-goods catalog, the order
    * book for the currently-viewed good (replaced wholesale per `viewMarket`),
    * and the player's own active orders across all goods. Null until the first
@@ -266,13 +271,13 @@ type WorldState = {
    * flag, and account id — present only where the requester may see it (their
    * own always, anyone's when staff), null otherwise. Null until a lookup
    * answers / after a new lookup starts. */
-  profile: { username: string | null; online: boolean; accountId: number | null } | null;
+  profile: { username: string | null; online: boolean; accountId: number | null; } | null;
   /** The current page of the enforcement log (the moderation view; staff
    * only). Replaced per `modLogPage` push; null until requested. */
-  modLog: { page: number; hasMore: boolean; entries: ModLogEntryView[] } | null;
+  modLog: { page: number; hasMore: boolean; entries: ModLogEntryView[]; } | null;
   /** The current page of the pending report queue (staff only). Replaced per
    * `modReportsPage` push; null until requested. */
-  modReports: { page: number; hasMore: boolean; reports: ReportView[] } | null;
+  modReports: { page: number; hasMore: boolean; reports: ReportView[]; } | null;
   /** The current page of the moderation room-message browser (chat.md
    * "Logging"; staff only): the room being viewed and its newest-first page.
    * Replaced per `modRoomMessagesPage` push; null until requested. */
@@ -286,10 +291,24 @@ type WorldState = {
    * Null until requested. */
   moderators: string[] | null;
   lastRewards: RewardReport | null;
+  /** The players present in the current zone (the `zonePlayers` push, combat.md
+   * "Active combat" / zones-and-travel.md co-presence). Replaced wholesale;
+   * empty until requested / offline. */
+  zonePlayers: ZonePlayerView[];
+  /** The open active-combat lobbies in the current zone (the `combatList`
+   * push). Replaced wholesale; empty until requested / offline. */
+  zoneCombat: CombatLobbyView[];
+  /** The bosses that can be roused in the current zone — the available
+   * active-combat actions (the `zoneBosses` push). Empty until requested. */
+  zoneBosses: BossOptionView[];
+  /** The active-combat instance the player is currently in (the `combatState`
+   * push), or null when not in a fight. Cleared on `combatClosed`. */
+  combat: CombatState | null;
+  lastActionKind: string | null;
   /** The last combat request, for quick restart. */
-  lastCombat: { enemy: string; kc: number } | null;
+  lastCombat: { enemy: string; kc: number; } | null;
   /** The last travel request (the chosen direction), for quick restart. */
-  lastTravel: { direction: Direction } | null;
+  lastTravel: { direction: Direction; } | null;
   log: ActionLogEntry[];
 };
 
@@ -317,13 +336,13 @@ export type Game = {
     messageId: number,
     reason: string,
     dm: boolean,
-    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void; },
   ) => void;
   /** Revoke a room message (moderators/admins only — chat.md "Enforcement"):
    * the server marks it and broadcasts the hide instruction to everyone. */
   revokeMessage: (
     messageId: number,
-    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void; },
   ) => void;
   /** Look up a player's minimal profile (username + online); null = own.
    * Answered via `world.profile`. */
@@ -344,14 +363,14 @@ export type Game = {
   /** Resolve (dismiss) a pending report (staff only). */
   resolveReport: (
     reportId: number,
-    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void; },
   ) => void;
   /** Designate / un-designate a player moderator (admin command, sudoers-
    * gated server-side — only surface to `world.isAdmin`). */
   setModerator: (
     username: string,
     moderator: boolean,
-    handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void; },
   ) => void;
   /** Request the current moderator list (admin command; → `world.moderators`). */
   listModerators: () => void;
@@ -396,7 +415,7 @@ export type Game = {
    * on the ack, `onError` on a nack. */
   setMotd: (
     body: string,
-    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void; },
   ) => void;
   /** Hot-reload the server's authored content catalogs (an admin command,
    * content-format.md "Hot reload"). Sudoers-gated server-side like
@@ -452,6 +471,26 @@ export type Game = {
   clearRewards: () => void;
   /** Append a local (client-only) line to the action log. */
   logLocal: (text: string) => void;
+  // --- Active combat (combat.md "Active combat") ---
+  /** Request the players present in the current zone (answered by
+   * `zonePlayers`). */
+  listZonePlayers: () => void;
+  /** Request the open active-combat lobbies in the current zone (answered by
+   * `combatList`). */
+  listZoneCombat: () => void;
+  /** Request the bosses that can be roused in the current zone — the available
+   * active-combat actions (answered by `zoneBosses`). */
+  listZoneBosses: () => void;
+  /** Rouse a boss in the current zone, paying its entry cost and becoming host;
+   * acks with a `combatState` or nacks with the reason (`onError`). */
+  openCombat: (boss: string, onError?: (reason?: string) => void) => void;
+  /** Join an open lobby by instance id; acks with a `combatState` or nacks. */
+  joinCombat: (instance: number, onError?: (reason?: string) => void) => void;
+  /** Take the formation's Attack turn (rate-limited 1s server-side); a too-fast
+   * input nacks via `onError`. */
+  combatAttack: (instance: number, onError?: (reason?: string) => void) => void;
+  /** Withdraw from a fight (forfeits loot). */
+  leaveCombat: (instance: number, onError?: (reason?: string) => void) => void;
 };
 
 const GameContext = createContext<Game>();
@@ -484,6 +523,11 @@ export function GameProvider(props: ParentProps) {
     modRoomMessages: null,
     moderators: null,
     lastRewards: null,
+    zonePlayers: [],
+    zoneCombat: [],
+    zoneBosses: [],
+    combat: null,
+    lastActionKind: null,
     lastCombat: null,
     lastTravel: null,
     log: [],
@@ -527,7 +571,7 @@ export function GameProvider(props: ParentProps) {
   // the server's connect-time chatState push re-baselines everything anyway.
   // `onAck` receives the ack's optional result line (chat commands answer
   // with e.g. "troll banned for 3600s").
-  type Pending = { onAck?: (msg?: string) => void; onNack?: (reason?: string) => void };
+  type Pending = { onAck?: (msg?: string) => void; onNack?: (reason?: string) => void; };
   const pending = new Map<number, Pending>();
 
   const ensureRoom = (room: string) => {
@@ -742,7 +786,7 @@ export function GameProvider(props: ParentProps) {
           } else {
             pushLog(
               `${verb}: ${msg.action.kind} vs ${actionTarget(msg.action)} ` +
-                `(KC ${msg.action.kcDone}/${msg.action.kcTarget}).`,
+              `(KC ${msg.action.kcDone}/${msg.action.kcTarget}).`,
               "info",
             );
           }
@@ -759,6 +803,46 @@ export function GameProvider(props: ParentProps) {
         // Authoritative snapshot: replace the whole map.
         setWorld("map", { current: msg.current, zones: msg.zones });
         break;
+      // --- Active combat (combat.md "Active combat") ---
+      case "zonePlayers":
+        setWorld("zonePlayers", msg.players);
+        break;
+      case "combatList":
+        setWorld("zoneCombat", msg.instances);
+        break;
+      case "zoneBosses":
+        setWorld("zoneBosses", msg.bosses);
+        break;
+      case "combatState":
+        // Authoritative instance snapshot (replace) — the tag carries the same
+        // fields as the stored `CombatState`.
+        setWorld("combat", {
+          instance: msg.instance,
+          boss: msg.boss,
+          host: msg.host ?? null,
+          participants: msg.participants,
+          youAreHost: msg.youAreHost,
+          yourFormationHp: msg.yourFormationHp,
+          yourFormationMaxHp: msg.yourFormationMaxHp,
+          yourContribution: msg.yourContribution,
+          youDowned: msg.youDowned,
+        });
+        break;
+      case "combatEvent":
+        pushLog(msg.line, "combat");
+        break;
+      case "combatClosed": {
+        const verb =
+          msg.outcome === "defeated"
+            ? "The boss is defeated"
+            : msg.outcome === "wiped"
+              ? "Your party was wiped"
+              : "You withdrew from the fight";
+        pushLog(`${verb}.`, msg.outcome === "wiped" ? "failure" : "reward");
+        // Only clear if this close is for the fight we're tracking.
+        if (world.combat?.instance === msg.instance) setWorld("combat", null);
+        break;
+      }
       case "inventory":
         // Authoritative snapshot: replace, never merge or accumulate.
         setWorld("inventory", {
@@ -855,6 +939,7 @@ export function GameProvider(props: ParentProps) {
           if (msg.modifier) patch.modifier = msg.modifier;
           if (msg.tally) patch.tally = msg.tally;
           setWorld("action", patch);
+
           // Combat's delta fields fold into the nested combat slice.
           if (act.combat) {
             const combat: Partial<CombatView> = {};
@@ -939,7 +1024,7 @@ export function GameProvider(props: ParentProps) {
         } else {
           pushLog(
             `${msg.stopped ? "Stopped" : "Finished"} ${msg.kind} vs ${msg.targetName}: ` +
-              `${summarizeRewards(msg.rewards)}.`,
+            `${summarizeRewards(msg.rewards)}.`,
             "reward",
           );
         }
@@ -1078,7 +1163,7 @@ export function GameProvider(props: ParentProps) {
   const sendOp = (
     data: ClientData,
     offlineMsg: string,
-    handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void; },
   ) => {
     if (!online()) {
       handlers?.onError?.(offlineMsg);
@@ -1091,7 +1176,7 @@ export function GameProvider(props: ParentProps) {
     messageId: number,
     reason: string,
     dm: boolean,
-    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void; },
   ) =>
     sendOp(
       { t: "chat", ct: "report", messageId, reason, dm },
@@ -1103,7 +1188,7 @@ export function GameProvider(props: ParentProps) {
   // locally too — nothing is removed optimistically.
   const revokeMessage = (
     messageId: number,
-    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void; },
   ) =>
     sendOp(
       { t: "chat", ct: "revokeMessage", messageId },
@@ -1140,7 +1225,7 @@ export function GameProvider(props: ParentProps) {
 
   const resolveReport = (
     reportId: number,
-    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void; },
   ) =>
     sendOp(
       { t: "chat", ct: "resolveReport", reportId },
@@ -1152,7 +1237,7 @@ export function GameProvider(props: ParentProps) {
   const setModerator = (
     username: string,
     moderator: boolean,
-    handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: (msg?: string) => void; onError?: (reason?: string) => void; },
   ) =>
     sendOp(
       { t: "adminCmd", tt: "setModerator", username, moderator },
@@ -1304,6 +1389,65 @@ export function GameProvider(props: ParentProps) {
     );
   };
 
+  /* ---- active combat (combat.md "Active combat") ---- */
+
+  const listZonePlayers = () => {
+    if (!online()) return;
+    untrack(() =>
+      sendRead(`listZonePlayers:${world.zone}`, { t: "game", gt: "listZonePlayers" }),
+    );
+  };
+
+  const listZoneCombat = () => {
+    if (!online()) return;
+    untrack(() => sendRead(`listZoneCombat:${world.zone}`, { t: "game", gt: "listZoneCombat" }));
+  };
+
+  const listZoneBosses = () => {
+    if (!online()) return;
+    untrack(() =>
+      sendRead(
+        `listZoneBosses:${world.zone}`,
+        { t: "game", gt: "listZoneBosses" },
+        () => world.zoneBosses.length > 0,
+      ),
+    );
+  };
+
+  const openCombat = (boss: string, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — combat needs a server connection");
+      return;
+    }
+    // The ack rides with the post-charge inventory + the instance state.
+    send({ t: "game", gt: "openCombat", boss }, { onNack: onError });
+  };
+
+  const joinCombat = (instance: number, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — combat needs a server connection");
+      return;
+    }
+    send({ t: "game", gt: "joinCombat", instance }, { onNack: onError });
+  };
+
+  const combatAttack = (instance: number, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — combat needs a server connection");
+      return;
+    }
+    // Rate-limited server-side (1s); a too-fast input nacks.
+    send({ t: "game", gt: "combatAttack", instance }, { onNack: onError });
+  };
+
+  const leaveCombat = (instance: number, onError?: (reason?: string) => void) => {
+    if (!online()) {
+      onError?.("offline — combat needs a server connection");
+      return;
+    }
+    send({ t: "game", gt: "leaveCombat", instance }, { onNack: onError });
+  };
+
   const equipGear = (unit: string, instanceId: number, onError?: (reason?: string) => void) => {
     if (!online()) {
       onError?.("offline — gear needs a server connection");
@@ -1356,7 +1500,7 @@ export function GameProvider(props: ParentProps) {
 
   const setMotd = (
     body: string,
-    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void },
+    handlers?: { onSuccess?: () => void; onError?: (reason?: string) => void; },
   ) => {
     if (!online()) {
       handlers?.onError?.("offline — admin commands need a server connection");
@@ -1524,6 +1668,17 @@ export function GameProvider(props: ParentProps) {
     clearAuth(); // flips the App gate back to the login screen
   };
 
+  // Reflect the in-flight action's remaining KC in the document title, so a
+  // backgrounded tab shows progress. Derived from world.action, so it covers
+  // every transition (tick / start / end / reconnect) in one place.
+  createEffect(() => {
+    const act = world.action;
+    document.title =
+      act && act.kcTarget != null
+        ? `${act.kcTarget - act.kcDone} left · Grindshell`
+        : "Grindshell";
+  });
+
   onMount(() => {
     // A real session token wins, even in uiDev: if the user logged in, connect.
     const token = authToken();
@@ -1614,6 +1769,13 @@ export function GameProvider(props: ParentProps) {
     rankingsBucket,
     clearRewards,
     logLocal,
+    listZonePlayers,
+    listZoneCombat,
+    listZoneBosses,
+    openCombat,
+    joinCombat,
+    combatAttack,
+    leaveCombat,
   };
 
   return <GameContext.Provider value={game}>{props.children}</GameContext.Provider>;

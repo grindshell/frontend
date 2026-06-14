@@ -1,7 +1,8 @@
 import type { RouteDefinition } from "@solidjs/router";
 import { Overview } from "./pages/game/overview/Overview";
 import { Actions } from "./pages/game/Actions";
-import { Area } from "./pages/game/Area";
+import { MapPage } from "./pages/game/Map";
+import { Zone } from "./pages/game/Zone";
 import { Formation } from "./pages/game/Formation";
 import { Inventory } from "./pages/game/Inventory";
 import { Market } from "./pages/game/Market";
@@ -21,7 +22,8 @@ import { TimeTracker, ResourceEditor } from "./pages/game/placeholders";
 export const Routes: RouteDefinition[] = [
   { path: "/", component: Overview },
   { path: "/actions", component: Actions },
-  { path: "/area", component: Area },
+  { path: "/zone", component: Zone },
+  { path: "/map", component: MapPage },
   { path: "/formation", component: Formation },
   { path: "/inventory", component: Inventory },
   { path: "/global-market", component: Market },

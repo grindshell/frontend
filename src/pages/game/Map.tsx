@@ -48,7 +48,7 @@ type MapItem = { x: number; y: number; zone: MapZoneInfo };
 const dangerClass = (d: number): string =>
   d <= 1 ? "badge-success" : d <= 3 ? "badge-warning" : "badge-error";
 
-export function Area() {
+export function MapPage() {
   const game = useGame();
 
   const map = () => game.world.map;
@@ -166,9 +166,9 @@ export function Area() {
       : null;
 
   return (
-    <section class="size-full flex flex-col" data-screen-label="Area">
+    <section class="size-full flex flex-col" data-screen-label="Map">
       <header class="flex items-baseline gap-3 mb-3 px-1">
-        <h1 class="text-xl font-mono tracking-tight">Area</h1>
+        <h1 class="text-xl font-mono tracking-tight">Map</h1>
         <span class="text-xs text-base-content/45">// the zone map</span>
         <div class="ml-auto flex items-center gap-2">
           <div class="join">

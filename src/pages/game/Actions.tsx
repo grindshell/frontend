@@ -39,7 +39,9 @@ const KIND_BY_TAB: Record<Tab, string> = {
 
 export function Actions() {
   const game = useGame();
-  const [tab, setTab] = createSignal<Tab>("Combat");
+  const rawInitalTab = game.world.action?.kind ?? "Combat";
+  const initialTab = (rawInitalTab.charAt(0).toUpperCase() + rawInitalTab.slice(1)) as Tab;
+  const [tab, setTab] = createSignal<Tab>(initialTab);
   const [showLog, setShowLog] = createSignal(true);
 
   return (
@@ -247,7 +249,7 @@ function EnemyBrowser() {
 
 /** The in-flight combat action: KC progress, both health pools, the cached
  * stat blocks (with the live modifier), and the accrued tally. */
-function CurrentCombat(props: { act: ActionView }) {
+function CurrentCombat(props: { act: ActionView; }) {
   const game = useGame();
   // The combat slice of the action view; always present when kind is
   // "combat", which is the only way this component renders.
@@ -450,7 +452,7 @@ function DestinationBrowser() {
  * wins no loot — its outcome is the arrival — but it does accrue use-based XP
  * each tick (progression.md), so there are no health pools but there is an XP
  * tally. */
-function CurrentTravel(props: { act: ActionView }) {
+function CurrentTravel(props: { act: ActionView; }) {
   const game = useGame();
   const travel = () => props.act.travel;
   const phaseLabel = () =>
@@ -527,7 +529,7 @@ function CurrentTravel(props: { act: ActionView }) {
   );
 }
 
-function HpBar(props: { label: string; hp: number; max: number; cls: string }) {
+function HpBar(props: { label: string; hp: number; max: number; cls: string; }) {
   return (
     <div>
       <div class="flex justify-between text-xs text-base-content/55 mb-1">
@@ -541,7 +543,7 @@ function HpBar(props: { label: string; hp: number; max: number; cls: string }) {
   );
 }
 
-const STAT_ROWS: { key: keyof ActionStatsView; label: string }[] = [
+const STAT_ROWS: { key: keyof ActionStatsView; label: string; }[] = [
   { key: "health", label: "Health" },
   { key: "physicalAttack", label: "P.Atk" },
   { key: "magicalAttack", label: "M.Atk" },
@@ -552,7 +554,7 @@ const STAT_ROWS: { key: keyof ActionStatsView; label: string }[] = [
 
 /** A six-stat block; the formation side shows its per-tick modifier (zone
  * effects, status effects) next to the cached value when one is active. */
-function StatsPanel(props: { title: string; stats: ActionStatsView; modifier?: ActionStatsView }) {
+function StatsPanel(props: { title: string; stats: ActionStatsView; modifier?: ActionStatsView; }) {
   return (
     <div class="bg-base-200/40 rounded-box p-3">
       <p class="text-xs text-base-content/45 mb-2">{props.title}</p>
@@ -586,7 +588,7 @@ function StatsPanel(props: { title: string; stats: ActionStatsView; modifier?: A
 
 /** Per-target use-based XP badges (progression.md): "+30 STR", with a "→2"
  * suffix on the gains that crossed a trained-level boundary at commit. */
-function XpBadges(props: { experience?: XpGainView[] }) {
+function XpBadges(props: { experience?: XpGainView[]; }) {
   return (
     <For each={props.experience ?? []}>
       {(e) => (
@@ -602,7 +604,7 @@ function XpBadges(props: { experience?: XpGainView[] }) {
 }
 
 /** Per-entity Knowledge badges (knowledge.md): "🧭 +7 Rust Flats". */
-function KnowledgeBadges(props: { knowledge?: KnowledgeGainView[] }) {
+function KnowledgeBadges(props: { knowledge?: KnowledgeGainView[]; }) {
   return (
     <For each={props.knowledge ?? []}>
       {(k) => (
@@ -614,7 +616,7 @@ function KnowledgeBadges(props: { knowledge?: KnowledgeGainView[] }) {
   );
 }
 
-function TallyBadges(props: { tally: RewardsView }) {
+function TallyBadges(props: { tally: RewardsView; }) {
   const c = () => props.tally.currencies;
   return (
     <div class="flex flex-wrap gap-1">

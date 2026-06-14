@@ -189,7 +189,22 @@ export type GameData =
   | { gt: "viewRankings"; metric: string; page: number }
   // Locate a player on `metric`'s board by username (rankings.md "Player search
   // within a board"). Answered with a `rankingPlayerAt` push.
-  | { gt: "findRankingPlayer"; metric: string; username: string };
+  | { gt: "findRankingPlayer"; metric: string; username: string }
+  // --- Active combat (combat.md "Active combat") ---
+  // The players present in the requester's zone (co-presence). `zonePlayers`.
+  | { gt: "listZonePlayers" }
+  // The open active-combat lobbies hosted in the requester's zone. `combatList`.
+  | { gt: "listZoneCombat" }
+  // The bosses that can be roused in the requester's zone. `zoneBosses`.
+  | { gt: "listZoneBosses" }
+  // Rouse `boss` in the current zone, paying its entry cost and becoming host.
+  | { gt: "openCombat"; boss: string }
+  // Join an open lobby by instance id.
+  | { gt: "joinCombat"; instance: number }
+  // Take the formation's Attack turn (rate-limited 1s server-side).
+  | { gt: "combatAttack"; instance: number }
+  // Withdraw from a fight (forfeits loot).
+  | { gt: "leaveCombat"; instance: number };
 
 // Top-level inbound data, tagged on `t`. Chat ops are carried under `t: "chat"`
 // and game ops under `t: "game"`. `requestState` is a top-level *control*
@@ -765,7 +780,98 @@ export type ServerMessage =
       rank?: number | null;
       page?: number | null;
       value?: number | null;
-    };
+    }
+  // --- Active combat (combat.md "Active combat") ---
+  // The answer to `listZonePlayers`: the connected players present in the
+  // requester's zone (zones-and-travel.md "Zone capacity and visibility").
+  | { t: "zonePlayers"; zone: string; players: ZonePlayerView[] }
+  // The answer to `listZoneCombat` (and the push to co-present players when a
+  // fight opens/fills/closes): the open lobbies hosted in `zone`. The client
+  // REPLACES its lobby list from this.
+  | { t: "combatList"; zone: string; instances: CombatLobbyView[] }
+  // The answer to `listZoneBosses`: the bosses that can be roused here — the
+  // available active-combat actions. The client REPLACES its boss-option list.
+  | { t: "zoneBosses"; zone: string; bosses: BossOptionView[] }
+  // The authoritative snapshot of an instance the requester participates in,
+  // pushed on open/join/attack/leave and on connect-if-in-fight. Carries the
+  // shared boss + roster and the requester's own pool/contribution. The client
+  // REPLACES its active-combat state from this.
+  | {
+      t: "combatState";
+      instance: number;
+      boss: CombatBossView;
+      host?: string | null;
+      participants: CombatParticipantView[];
+      youAreHost: boolean;
+      yourFormationHp: number;
+      yourFormationMaxHp: number;
+      yourContribution: number;
+      youDowned: boolean;
+    }
+  // A line of active-combat narration for the activity log (pure presentation).
+  | { t: "combatEvent"; instance: number; line: string }
+  // An instance the requester was in ended: the boss was `defeated`, the party
+  // `wiped`, or the requester `left`. The client clears its combat state.
+  | { t: "combatClosed"; instance: number; outcome: "defeated" | "wiped" | "left" };
+
+/** One player present in the requester's zone (`ZonePlayerView`). */
+export type ZonePlayerView = { username: string; inCombat: boolean };
+
+/** The shared boss of an active-combat instance (`CombatBossView`). */
+export type CombatBossView = {
+  id: string;
+  name: string;
+  hp: number;
+  maxHp: number;
+  stats: ActionStatsView;
+};
+
+/** One boss that can be roused in the current zone (`BossOptionView`) — an
+ * available active-combat action with its entry cost. */
+export type BossOptionView = {
+  id: string;
+  name: string;
+  description: string;
+  costResource: string;
+  costAmount: number;
+  maxHp: number;
+};
+
+/** One open lobby in a `combatList` (`CombatLobbyView`). */
+export type CombatLobbyView = {
+  instance: number;
+  bossId: string;
+  bossName: string;
+  host?: string | null;
+  participants: number;
+  bossHp: number;
+  bossMaxHp: number;
+};
+
+/** One participant in a `combatState` (`CombatParticipantView`). */
+export type CombatParticipantView = {
+  username: string;
+  isHost: boolean;
+  contribution: number;
+  formationHp: number;
+  formationMaxHp: number;
+  downed: boolean;
+  acted: boolean;
+};
+
+/** The active-combat instance state the client holds (the `combatState` body
+ * minus its tag), or `null` when not in a fight. */
+export type CombatState = {
+  instance: number;
+  boss: CombatBossView;
+  host?: string | null;
+  participants: CombatParticipantView[];
+  youAreHost: boolean;
+  yourFormationHp: number;
+  yourFormationMaxHp: number;
+  yourContribution: number;
+  youDowned: boolean;
+};
 
 /**
  * Parse a raw WebSocket text frame into typed `ServerMessage`s.
