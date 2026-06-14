@@ -37,12 +37,37 @@ const KIND_BY_TAB: Record<Tab, string> = {
   Craft: "crafting",
 };
 
+/** The wire `kind` id → its tab label (inverse of KIND_BY_TAB). */
+const TAB_BY_KIND: Record<string, Tab> = Object.fromEntries(
+  (Object.entries(KIND_BY_TAB) as [Tab, string][]).map(([t, k]) => [k, t]),
+);
+
+/** The live tab a wire `kind` maps to, or null if it isn't a tab the backend
+ *  serves (so Harvest/Craft kinds never select their empty placeholder tab). */
+const liveTabForKind = (kind: string | null): Tab | null => {
+  if (!kind) return null;
+  const t = TAB_BY_KIND[kind];
+  return t && LIVE_TABS.includes(t) ? t : null;
+};
+
 export function Actions() {
   const game = useGame();
-  const rawInitalTab = game.world.action?.kind ?? "Combat";
-  const initialTab = (rawInitalTab.charAt(0).toUpperCase() + rawInitalTab.slice(1)) as Tab;
-  const [tab, setTab] = createSignal<Tab>(initialTab);
+  // The kind the party is (or just was) doing — current action wins, else the
+  // last-ended action's reward view. Drives the initial tab and keeps it in
+  // sync as actions start/switch/end below.
+  const activeKind = createMemo(
+    () => game.world.action?.kind ?? game.world.lastRewards?.kind ?? null,
+  );
+  const [tab, setTab] = createSignal<Tab>(liveTabForKind(activeKind()) ?? "Combat");
   const [showLog, setShowLog] = createSignal(true);
+
+  // Follow the active action: snap the tab to it whenever its kind changes, so
+  // the page always opens on whatever the party is doing. Fires only on a kind
+  // change (the memo dedupes), so manual tab clicks while an action runs stick.
+  createEffect(() => {
+    const t = liveTabForKind(activeKind());
+    if (t) setTab(t);
+  });
 
   return (
     <section class="size-full flex flex-col" data-screen-label="Actions">
